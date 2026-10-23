@@ -437,6 +437,11 @@ follows:
   same time, they hold only keys seen since, and entities whose keys have not
   been seen yet, such as an H&T button until its next press, may show as
   unavailable after Home Assistant restarts.
+- **Keys are never dropped**: not even by a restart. To get rid of a stale key
+  and its entity, such as `temperature_2` from a one-off packet, stop
+  blugw-mqtt, publish empty retained messages to `blugw/device/<mac>` and
+  `homeassistant/device/blugw_<mac>/config`, then start it again. The device
+  starts afresh with its next reading.
 - **Listening only**: blugw does not configure devices or send them commands.
 
 ## Roadmap
