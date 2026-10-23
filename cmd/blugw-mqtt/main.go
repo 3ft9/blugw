@@ -1,7 +1,8 @@
 // Command blugw-mqtt publishes BTHome v2 readings from Shelly BLU and other
 // Bluetooth LE sensors to MQTT, optionally with Home Assistant discovery.
 //
-// It is configured with environment variables; run it with -h for the list.
+// It is configured with environment variables and, optionally, a YAML file;
+// run it with -h for the list.
 package main
 
 import (
@@ -13,11 +14,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,9 +33,10 @@ import (
 	"github.com/3ft9/blugw/blugw"
 	"github.com/3ft9/blugw/bthome"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"go.yaml.in/yaml/v3"
 )
 
-const usage = `Usage: blugw-mqtt
+const usage = `Usage: blugw-mqtt [-config file]
 
 Scans Bluetooth LE for BTHome v2 devices, such as Shelly BLU sensors, and
 publishes their readings to MQTT. It is configured with environment variables:
@@ -58,6 +62,12 @@ publishes their readings to MQTT. It is configured with environment variables:
   BLUGW_HA_PREFIX      Home Assistant discovery prefix (default: homeassistant)
   BLUGW_LOG_LEVEL      debug, info, warn or error (default: info)
 
+-config reads the same settings from a YAML file, with the keys mqtt.url,
+mqtt.user, mqtt.password, mqtt.qos, name, prefix, include, exclude, names,
+keys, watchdog, homeassistant.enabled, homeassistant.prefix and log_level.
+include and exclude are lists of MACs; names and keys map MACs to values. A
+variable that is set and not empty overrides the file's value.
+
 Topics, with <mac> as 12 lower-case hex digits:
 
   <prefix>/gateway/<name>/status   online or offline (retained)
@@ -67,18 +77,30 @@ Topics, with <mac> as 12 lower-case hex digits:
 `
 
 func main() {
+	path := flag.String("config", "", "")
 	flag.Usage = func() { fmt.Fprint(flag.CommandLine.Output(), usage) }
 	flag.Parse()
-	if flag.NArg() > 0 || os.Getenv("BLUGW_MQTT_URL") == "" {
+	if flag.NArg() > 0 || *path == "" && os.Getenv("BLUGW_MQTT_URL") == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
-	cfg, err := parseConfig(os.Getenv)
+	var f file
+	if *path != "" {
+		var err error
+		if f, err = loadFile(*path); err != nil {
+			fmt.Fprintln(os.Stderr, "blugw-mqtt:", err)
+			os.Exit(2)
+		}
+	}
+	cfg, err := parseConfig(os.Getenv, f)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "blugw-mqtt:", err)
 		os.Exit(2)
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.level})))
+	if f.exposed {
+		slog.Warn("blugw-mqtt: the config file holds secrets but group or others can read it", "file", f.path)
+	}
 
 	g := newGateway(cfg)
 	c := connect(g)
@@ -170,14 +192,68 @@ type config struct {
 	names               map[bthome.MAC]string
 }
 
-func parseConfig(getenv func(string) string) (config, error) {
+// file is the -config YAML file. Its keys are the lower-cased field names.
+// Every scalar is a string, which YAML fills with the text as written, so
+// MACs, keys with leading zeros and "yes" reach the same validation as the
+// environment variables do.
+type file struct {
+	MQTT             struct{ URL, User, Password, QoS string }
+	Name, Prefix     string
+	Include, Exclude []string
+	Names, Keys      map[string]string
+	Watchdog         string
+	HomeAssistant    struct{ Enabled, Prefix string }
+	LogLevel         string `yaml:"log_level"`
+
+	path    string // where the file was read from; empty if there is none
+	exposed bool   // holds secrets, but group or others can read it
+}
+
+// loadFile reads the configuration file at path, rejecting unknown keys.
+func loadFile(path string) (file, error) {
+	f := file{path: path}
+	r, err := os.Open(path)
+	if err != nil {
+		return f, err
+	}
+	defer r.Close()
+	d := yaml.NewDecoder(r)
+	d.KnownFields(true)
+	if err := d.Decode(&f); err != nil && err != io.EOF {
+		// A type error quotes the start of the value, which may be a secret.
+		var te *yaml.TypeError
+		if errors.As(err, &te) {
+			for i, e := range te.Errors {
+				if a, b := strings.Index(e, " `"), strings.LastIndex(e, "` "); a >= 0 && b > a {
+					te.Errors[i] = e[:a] + e[b+1:]
+				}
+			}
+		}
+		return f, fmt.Errorf("%s: %w", path, err)
+	}
+	if fi, err := r.Stat(); err == nil && runtime.GOOS != "windows" {
+		f.exposed = fi.Mode().Perm()&0o077 != 0 && (f.MQTT.Password != "" || len(f.Keys) > 0)
+	}
+	return f, nil
+}
+
+// parseConfig reads the configuration from getenv and f. A variable that is
+// not empty overrides the file's value for the same setting.
+func parseConfig(getenv func(string) string, f file) (config, error) {
+	// label names a setting in errors: env, unless the value came from f.
+	label := func(env, key string) string {
+		if f.path == "" || getenv(env) != "" {
+			return env
+		}
+		return f.path + ": " + key
+	}
 	c := config{
-		url:      getenv("BLUGW_MQTT_URL"),
-		user:     getenv("BLUGW_MQTT_USER"),
-		password: getenv("BLUGW_MQTT_PASSWORD"),
-		name:     getenv("BLUGW_NAME"),
-		prefix:   cmp.Or(getenv("BLUGW_PREFIX"), "blugw"),
-		haPrefix: cmp.Or(getenv("BLUGW_HA_PREFIX"), "homeassistant"),
+		url:      cmp.Or(getenv("BLUGW_MQTT_URL"), f.MQTT.URL),
+		user:     cmp.Or(getenv("BLUGW_MQTT_USER"), f.MQTT.User),
+		password: cmp.Or(getenv("BLUGW_MQTT_PASSWORD"), f.MQTT.Password),
+		name:     cmp.Or(getenv("BLUGW_NAME"), f.Name),
+		prefix:   cmp.Or(getenv("BLUGW_PREFIX"), f.Prefix, "blugw"),
+		haPrefix: cmp.Or(getenv("BLUGW_HA_PREFIX"), f.HomeAssistant.Prefix, "homeassistant"),
 		qos:      1,
 		opts:     blugw.Options{Watchdog: 5 * time.Minute},
 	}
@@ -185,7 +261,7 @@ func parseConfig(getenv func(string) string) (config, error) {
 	u, err := url.Parse(c.url)
 	if err != nil {
 		// Not wrapped: the error holds the URL, password and all.
-		return c, errors.New("BLUGW_MQTT_URL: " + wantURL)
+		return c, errors.New(label("BLUGW_MQTT_URL", "mqtt.url") + ": " + wantURL)
 	}
 	ok := false
 	switch u.Scheme { // those paho supports
@@ -198,30 +274,30 @@ func parseConfig(getenv func(string) string) (config, error) {
 		ok = u.Host != "" || u.Path != ""
 	}
 	if !ok {
-		return c, fmt.Errorf("BLUGW_MQTT_URL %q: %s", u.Redacted(), wantURL)
+		return c, fmt.Errorf("%s %q: %s", label("BLUGW_MQTT_URL", "mqtt.url"), u.Redacted(), wantURL)
 	}
 	if c.name == "" {
 		h, err := os.Hostname()
 		if err != nil {
-			return c, fmt.Errorf("BLUGW_NAME is not set and the host name is unknown: %w", err)
+			return c, fmt.Errorf("%s is not set and the host name is unknown: %w", label("BLUGW_NAME", "name"), err)
 		}
 		c.name = h
 	}
 	if !topicLevels(c.name) || strings.Contains(c.name, "/") {
-		return c, fmt.Errorf("BLUGW_NAME %q: want one MQTT topic level, without / + #", c.name)
+		return c, fmt.Errorf("%s %q: want one MQTT topic level, without / + #", label("BLUGW_NAME", "name"), c.name)
 	}
 	if !topicLevels(c.prefix) || strings.HasPrefix(c.prefix, "$") {
-		return c, fmt.Errorf("BLUGW_PREFIX %q: want topic levels such as blugw or home/ble, without + #, empty levels or a leading $", c.prefix)
+		return c, fmt.Errorf("%s %q: want topic levels such as blugw or home/ble, without + #, empty levels or a leading $", label("BLUGW_PREFIX", "prefix"), c.prefix)
 	}
 	if !topicLevels(c.haPrefix) || strings.HasPrefix(c.haPrefix, "$") {
-		return c, fmt.Errorf("BLUGW_HA_PREFIX %q: want topic levels such as homeassistant, without + #, empty levels or a leading $", c.haPrefix)
+		return c, fmt.Errorf("%s %q: want topic levels such as homeassistant, without + #, empty levels or a leading $", label("BLUGW_HA_PREFIX", "homeassistant.prefix"), c.haPrefix)
 	}
 
-	include, err := macSet(getenv, "BLUGW_INCLUDE")
+	include, err := macSet(label("BLUGW_INCLUDE", "include"), getenv("BLUGW_INCLUDE"), f.Include)
 	if err != nil {
 		return c, err
 	}
-	exclude, err := macSet(getenv, "BLUGW_EXCLUDE")
+	exclude, err := macSet(label("BLUGW_EXCLUDE", "exclude"), getenv("BLUGW_EXCLUDE"), f.Exclude)
 	if err != nil {
 		return c, err
 	}
@@ -231,57 +307,88 @@ func parseConfig(getenv func(string) string) (config, error) {
 		}
 	}
 
-	for item := range strings.SplitSeq(getenv("BLUGW_NAMES"), ";") {
-		if item = strings.TrimSpace(item); item == "" {
-			continue
-		}
-		ms, name, _ := strings.Cut(item, "=")
+	addName := func(ms, name string) bool {
 		mac, err := parseMAC(strings.TrimSpace(ms))
 		if name = strings.TrimSpace(name); err != nil || name == "" {
-			return c, fmt.Errorf("BLUGW_NAMES: %q: want MAC=name", item)
+			return false
 		}
 		if c.names == nil {
 			c.names = map[bthome.MAC]string{}
 		}
 		c.names[mac] = name
+		return true
+	}
+	if s := getenv("BLUGW_NAMES"); s != "" {
+		for item := range strings.SplitSeq(s, ";") {
+			if item = strings.TrimSpace(item); item == "" {
+				continue
+			}
+			if ms, name, _ := strings.Cut(item, "="); !addName(ms, name) {
+				return c, fmt.Errorf("BLUGW_NAMES: %q: want MAC=name", item)
+			}
+		}
+	} else {
+		for ms, name := range f.Names {
+			if !addName(ms, name) {
+				return c, fmt.Errorf("%s: names: %q: want a MAC and a name", f.path, ms)
+			}
+		}
 	}
 
-	for i, item := range list(getenv("BLUGW_KEYS")) {
-		ms, ks, _ := strings.Cut(item, "=")
+	addKey := func(ms, ks string) bool {
 		mac, err := parseMAC(ms)
 		key, kerr := hex.DecodeString(ks)
 		if err != nil || kerr != nil || len(key) != 16 {
-			// Keys are secret, and a malformed item may be all key.
-			return c, fmt.Errorf("BLUGW_KEYS: item %d: want MAC=<32 hex digits>", i+1)
+			return false
 		}
 		if c.opts.Keys == nil {
 			c.opts.Keys = map[bthome.MAC][]byte{}
 		}
 		c.opts.Keys[mac] = key
+		return true
+	}
+	// Keys are secret, and a malformed item may be all key, so errors quote
+	// neither.
+	if s := getenv("BLUGW_KEYS"); s != "" {
+		for i, item := range list(s) {
+			if ms, ks, _ := strings.Cut(item, "="); !addKey(ms, ks) {
+				return c, fmt.Errorf("BLUGW_KEYS: item %d: want MAC=<32 hex digits>", i+1)
+			}
+		}
+	} else {
+		for ms, ks := range f.Keys {
+			if !addKey(ms, ks) {
+				entry := "an entry"
+				if mac, err := parseMAC(ms); err == nil {
+					entry = mac.String()
+				}
+				return c, fmt.Errorf("%s: keys: %s: want a MAC and 32 hex digits", f.path, entry)
+			}
+		}
 	}
 
-	if s := getenv("BLUGW_WATCHDOG"); s != "" {
+	if s := cmp.Or(getenv("BLUGW_WATCHDOG"), f.Watchdog); s != "" {
 		d, err := time.ParseDuration(s)
 		if err != nil || d < 0 {
-			return c, fmt.Errorf("BLUGW_WATCHDOG %q: want a duration such as 5m, or 0 to disable", s)
+			return c, fmt.Errorf("%s %q: want a duration such as 5m, or 0 to disable", label("BLUGW_WATCHDOG", "watchdog"), s)
 		}
 		c.opts.Watchdog = d
 	}
-	if s := getenv("BLUGW_HA"); s != "" {
+	if s := cmp.Or(getenv("BLUGW_HA"), f.HomeAssistant.Enabled); s != "" {
 		if c.ha, err = strconv.ParseBool(s); err != nil {
-			return c, fmt.Errorf("BLUGW_HA %q: want true or false", s)
+			return c, fmt.Errorf("%s %q: want true or false", label("BLUGW_HA", "homeassistant.enabled"), s)
 		}
 	}
-	if s := getenv("BLUGW_MQTT_QOS"); s != "" {
+	if s := cmp.Or(getenv("BLUGW_MQTT_QOS"), f.MQTT.QoS); s != "" {
 		q, err := strconv.ParseUint(s, 10, 8)
 		if err != nil || q > 2 {
-			return c, fmt.Errorf("BLUGW_MQTT_QOS %q: want 0, 1 or 2", s)
+			return c, fmt.Errorf("%s %q: want 0, 1 or 2", label("BLUGW_MQTT_QOS", "mqtt.qos"), s)
 		}
 		c.qos = byte(q)
 	}
-	if s := getenv("BLUGW_LOG_LEVEL"); s != "" {
+	if s := cmp.Or(getenv("BLUGW_LOG_LEVEL"), f.LogLevel); s != "" {
 		if err := c.level.UnmarshalText([]byte(s)); err != nil {
-			return c, fmt.Errorf("BLUGW_LOG_LEVEL %q: want debug, info, warn or error", s)
+			return c, fmt.Errorf("%s %q: want debug, info, warn or error", label("BLUGW_LOG_LEVEL", "log_level"), s)
 		}
 	}
 	return c, nil
@@ -304,12 +411,17 @@ func list(s string) []string {
 	return items
 }
 
-func macSet(getenv func(string) string, name string) (map[bthome.MAC]bool, error) {
+// macSet parses the comma-separated MACs in env or, if it is empty, items.
+// label names the setting in errors.
+func macSet(label, env string, items []string) (map[bthome.MAC]bool, error) {
+	if env != "" {
+		items = list(env)
+	}
 	set := map[bthome.MAC]bool{}
-	for _, item := range list(getenv(name)) {
+	for _, item := range items {
 		mac, err := parseMAC(item)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+			return nil, fmt.Errorf("%s: %w", label, err)
 		}
 		set[mac] = true
 	}
