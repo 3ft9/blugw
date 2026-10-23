@@ -70,6 +70,9 @@ func advertise(payload []byte) error {
 	_, err = prop.Export(conn, beaconPath, prop.Map{"org.bluez.LEAdvertisement1": {
 		"Type":             {Value: "broadcast"},
 		"ManufacturerData": {Value: map[uint16]any{shellyCompany: payload}},
+		// BlueZ drops the advertisement by itself if we stop refreshing it,
+		// as when the process is paused, so a stale time is not left on air.
+		"Timeout": {Value: uint16(3 * beaconInterval / time.Second)},
 	}})
 	if err != nil {
 		return err
