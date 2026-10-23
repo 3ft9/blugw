@@ -138,7 +138,10 @@ The value types are:
 The state holds the last known value of every key. A new reading only
 overwrites the keys it carries. For example, the device-info packet that
 Shelly devices send every 6 hours holds only `packet_id`, `battery`, the model
-and the firmware, so `temperature` and `humidity` stay in the state.
+and the firmware, so `temperature` and `humidity` stay in the state. This
+holds across restarts: on connecting, blugw-mqtt reads back the retained state
+that it published itself (with its own `gateway`), and keeps those keys until
+new readings replace them.
 
 Event objects (button, dimmer, command) are not part of the state. Neither are
 the device type and firmware objects, which become `model_id` and `firmware`.
@@ -424,10 +427,15 @@ follows:
 - **Repeated bytes**: a device without a packet ID that sends identical bytes
   again is reported only when the bytes change.
 - **BTHome v1**: not supported.
-- **State is in memory**: after a restart, the state and the Home Assistant
-  config hold only keys seen since. Entities whose keys have not been seen yet,
-  such as an H&T button until its next press, may show as unavailable after
-  Home Assistant restarts.
+- **State is kept on the broker**: blugw-mqtt stores nothing on disk. After a
+  restart it restores the state from the broker's retained messages, which
+  needs permission to subscribe to `blugw/device/+`. If the broker has lost
+  them too, for example Mosquitto without `persistence true` restarted at the
+  same time, the state holds only keys seen since.
+- **Home Assistant config is in memory**: after a restart, the config holds
+  only keys seen since. Entities whose keys have not been seen yet, such as an
+  H&T button until its next press, may show as unavailable after Home
+  Assistant restarts.
 - **Listening only**: blugw does not configure devices or send them commands.
 
 ## Roadmap

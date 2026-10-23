@@ -170,7 +170,7 @@ func (g *gateway) component(m, k string, o bthome.Object) map[string]any {
 }
 
 // ifDefined returns a template rendering expr, or nothing while the state lacks
-// key k, as it does after a gateway restart until k is seen again. Binary
+// key k, as it can after a gateway restart until k is seen again. Binary
 // sensors and sensors with a unit, state class or device class ignore empty
 // output and keep their last state.
 func ifDefined(k, expr string) string {

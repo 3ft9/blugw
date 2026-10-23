@@ -334,3 +334,42 @@ func TestNames(t *testing.T) {
 		t.Errorf("name not in state: %s", state)
 	}
 }
+
+func TestRestore(t *testing.T) {
+	const (
+		state = "blugw/device/38398f8c77da"
+		// Published before a restart, with an older battery, rssi and time,
+		// and a name from a BLUGW_NAMES entry removed since.
+		old = `{"battery":85,"encrypted":false,"gateway":"test","humidity":55,"local_name":"SBHT-003C","mac":"38:39:8F:8C:77:DA","model_id":3,"name":"Office","packet_id":9,"rssi":-80,"temperature":19.5,"time":"2026-10-23T11:00:00.000Z"}`
+		// After a device-info packet, without and with the old state.
+		info   = `{"battery":100,"encrypted":false,"firmware":"1.0.23.0","gateway":"test","mac":"38:39:8F:8C:77:DA","model_id":3,"packet_id":222,"rssi":-68,"time":"2026-10-23T17:57:14.348Z"}`
+		merged = `{"battery":100,"encrypted":false,"firmware":"1.0.23.0","gateway":"test","humidity":55,"local_name":"SBHT-003C","mac":"38:39:8F:8C:77:DA","model_id":3,"packet_id":222,"rssi":-68,"temperature":19.5,"time":"2026-10-23T17:57:14.348Z"}`
+	)
+	tests := []struct {
+		name           string
+		topic, payload string
+		deny           bool   // BLUGW_EXCLUDE has the device
+		state          string // published after a device-info packet
+	}{
+		{"state", state, old, false, merged},
+		{"foreign gateway", state, strings.Replace(old, `"gateway":"test"`, `"gateway":"attic"`, 1), false, info},
+		{"state not allowed", state, old, true, info},
+		{"malformed state", state, old[:40], false, info},
+		{"state not an object", state, `["gateway","test"]`, false, info},
+		{"upper-case topic", "blugw/device/38398F8C77DA", old, false, info},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newGateway(config{name: "test", prefix: "blugw", ha: true, haPrefix: "homeassistant", qos: 1})
+			g.opts.Allow = func(bthome.MAC) bool { return !tc.deny }
+			g.restore(tc.topic, []byte(tc.payload))
+			msgs := g.messages(reading(t, "4400de0164f00300f100170001", 3, ""))
+			if len(msgs) != 2 {
+				t.Fatalf("got %q, want config and state", show(msgs))
+			}
+			if got := string(msgs[1].payload); got != tc.state {
+				t.Errorf("state\ngot  %s\nwant %s", got, tc.state)
+			}
+		})
+	}
+}
