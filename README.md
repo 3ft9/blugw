@@ -13,7 +13,39 @@ parts:
 
 ## Install
 
-Go 1.25 or later is required.
+Each [release](https://github.com/3ft9/blugw/releases) has a `.tar.gz`
+archive per platform, holding the `blugw-mqtt` binary, this README and the
+license, and a `SHA256SUMS` file:
+
+| Archive | Platform |
+| --- | --- |
+| `blugw-mqtt_linux_arm64.tar.gz` | 64-bit ARM Linux, such as a Raspberry Pi 3, 4, 5 or Zero 2 W |
+| `blugw-mqtt_linux_armv7.tar.gz` | 32-bit ARMv7 Linux, such as a Raspberry Pi 2, or a later Pi with a 32-bit kernel |
+| `blugw-mqtt_linux_armv6.tar.gz` | 32-bit ARMv6 Linux: a Raspberry Pi 1, Zero or Zero W |
+| `blugw-mqtt_linux_amd64.tar.gz` | 64-bit x86 Linux |
+| `blugw-mqtt_darwin_arm64.tar.gz` | macOS on Apple silicon |
+
+On a Raspberry Pi, `uname -m` prints `aarch64` for `linux_arm64`, `armv7l`
+for `linux_armv7` and `armv6l` for `linux_armv6`. The binaries are static, so
+a Pi with a 64-bit kernel can use `linux_arm64` even if the rest of the OS is
+32-bit.
+
+This installs the latest release for a 64-bit Pi in `/usr/local/bin`, where
+the systemd unit under [Deployment](#deployment) expects it:
+
+```sh
+curl -fLO https://github.com/3ft9/blugw/releases/latest/download/blugw-mqtt_linux_arm64.tar.gz
+curl -fLO https://github.com/3ft9/blugw/releases/latest/download/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+sudo tar -xzf blugw-mqtt_linux_arm64.tar.gz -C /usr/local/bin blugw-mqtt
+```
+
+On macOS, check the archive with
+`shasum -a 256 -c --ignore-missing SHA256SUMS`. The binary is not notarized,
+so macOS refuses to run it if it was downloaded with a browser.
+`xattr -d com.apple.quarantine blugw-mqtt` lifts that.
+
+To build from source instead, Go 1.25 or later is required:
 
 ```sh
 go install github.com/3ft9/blugw/cmd/blugw-mqtt@latest
@@ -327,8 +359,8 @@ with `Environment=` lines.
 
 ### Docker
 
-Use a binary built with `CGO_ENABLED=0`. It needs only the D-Bus socket, not
-`--privileged` or host networking:
+Use a Linux release binary, or one built with `CGO_ENABLED=0`. It needs only
+the D-Bus socket, not `--privileged` or host networking:
 
 ```sh
 docker run -d --name blugw-mqtt --restart=always \
