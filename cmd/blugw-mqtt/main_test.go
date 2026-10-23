@@ -338,25 +338,37 @@ func TestNames(t *testing.T) {
 func TestRestore(t *testing.T) {
 	const (
 		state = "blugw/device/38398f8c77da"
+		disc  = "homeassistant/device/blugw_38398f8c77da/config"
 		// Published before a restart, with an older battery, rssi and time,
 		// and a name from a BLUGW_NAMES entry removed since.
 		old = `{"battery":85,"encrypted":false,"gateway":"test","humidity":55,"local_name":"SBHT-003C","mac":"38:39:8F:8C:77:DA","model_id":3,"name":"Office","packet_id":9,"rssi":-80,"temperature":19.5,"time":"2026-10-23T11:00:00.000Z"}`
 		// After a device-info packet, without and with the old state.
 		info   = `{"battery":100,"encrypted":false,"firmware":"1.0.23.0","gateway":"test","mac":"38:39:8F:8C:77:DA","model_id":3,"packet_id":222,"rssi":-68,"time":"2026-10-23T17:57:14.348Z"}`
 		merged = `{"battery":100,"encrypted":false,"firmware":"1.0.23.0","gateway":"test","humidity":55,"local_name":"SBHT-003C","mac":"38:39:8F:8C:77:DA","model_id":3,"packet_id":222,"rssi":-68,"temperature":19.5,"time":"2026-10-23T17:57:14.348Z"}`
+		button = `"38398f8c77da_button":{"device_class":"button","event_types":["press"],"name":"Button","platform":"event","state_topic":"blugw/device/38398f8c77da/event/button","unique_id":"blugw_38398f8c77da_button"}`
 	)
+	cfg := strings.Replace(htConfig, `"components":{`, `"components":{`+button+",", 1)
 	tests := []struct {
 		name           string
 		topic, payload string
 		deny           bool   // BLUGW_EXCLUDE has the device
 		state          string // published after a device-info packet
+		button         bool   // whether the config keeps the restored button
 	}{
-		{"state", state, old, false, merged},
-		{"foreign gateway", state, strings.Replace(old, `"gateway":"test"`, `"gateway":"attic"`, 1), false, info},
-		{"state not allowed", state, old, true, info},
-		{"malformed state", state, old[:40], false, info},
-		{"state not an object", state, `["gateway","test"]`, false, info},
-		{"upper-case topic", "blugw/device/38398F8C77DA", old, false, info},
+		{"state", state, old, false, merged, false},
+		{"config", disc, cfg, false, info, true},
+		{"foreign gateway", state, strings.Replace(old, `"gateway":"test"`, `"gateway":"attic"`, 1), false, info, false},
+		{"other origin", disc, strings.Replace(cfg, `"name":"blugw-mqtt"`, `"name":"zigbee2mqtt"`, 1), false, info, false},
+		{"other identifiers", disc, strings.Replace(cfg, `"identifiers":["blugw_38398f8c77da"]`, `"identifiers":["0x38398f8c77da"]`, 1), false, info, false},
+		{"state not allowed", state, old, true, info, false},
+		{"config not allowed", disc, cfg, true, info, false},
+		{"malformed state", state, old[:40], false, info, false},
+		{"state not an object", state, `["gateway","test"]`, false, info, false},
+		{"malformed config", disc, cfg[:40], false, info, false},
+		{"component not an object", disc, strings.Replace(cfg, `"components":{`, `"components":{"x":1,`, 1), false, info, false},
+		{"config on state topic", state, cfg, false, info, false},
+		{"state on config topic", disc, old, false, info, false},
+		{"upper-case topic", "blugw/device/38398F8C77DA", old, false, info, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -369,6 +381,9 @@ func TestRestore(t *testing.T) {
 			}
 			if got := string(msgs[1].payload); got != tc.state {
 				t.Errorf("state\ngot  %s\nwant %s", got, tc.state)
+			}
+			if got := strings.Contains(string(msgs[0].payload), button); got != tc.button {
+				t.Errorf("config has the restored button: %v, want %v", got, tc.button)
 			}
 		})
 	}

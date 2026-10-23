@@ -83,17 +83,21 @@ var eventTypes = map[byte][]string{
 // discovery returns the Home Assistant device discovery config for d.
 func (g *gateway) discovery(mac bthome.MAC, d *device) []byte {
 	m := hex.EncodeToString(mac[:])
-	cmps := map[string]any{
-		m + "_rssi": map[string]any{
-			"platform":            "sensor",
-			"unique_id":           "blugw_" + m + "_rssi",
-			"name":                title("rssi"),
-			"device_class":        "signal_strength",
-			"state_class":         "measurement",
-			"unit_of_measurement": "dBm",
-			"entity_category":     "diagnostic",
-			"value_template":      "{{ value_json.rssi }}",
-		},
+	// Restored components stay until replaced, so that entities whose keys
+	// have not been seen since a restart are not dropped.
+	cmps := map[string]any{}
+	for k, c := range d.cmps {
+		cmps[k] = c
+	}
+	cmps[m+"_rssi"] = map[string]any{
+		"platform":            "sensor",
+		"unique_id":           "blugw_" + m + "_rssi",
+		"name":                title("rssi"),
+		"device_class":        "signal_strength",
+		"state_class":         "measurement",
+		"unit_of_measurement": "dBm",
+		"entity_category":     "diagnostic",
+		"value_template":      "{{ value_json.rssi }}",
 	}
 	for k, o := range d.objs {
 		cmps[m+"_"+k] = g.component(m, k, o)

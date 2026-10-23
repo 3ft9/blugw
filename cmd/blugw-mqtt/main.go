@@ -119,18 +119,21 @@ func connect(g *gateway) mqtt.Client {
 		SetWill(g.status(), "offline", g.qos, true).
 		SetOnConnectHandler(func(c mqtt.Client) {
 			gen := g.conn.Add(1)
-			// Read back the retained states, so that keys not seen since a
-			// restart are kept. The broker sends retained messages right
-			// after the subscription. Anything later is live, mostly this
-			// gateway's own publishes echoed back (MQTT 3.1.1 has no no-local
-			// option), so it is ignored, and the subscription is dropped once
-			// the burst is surely over.
+			// Read back the retained states and configs, so that keys not
+			// seen since a restart are kept. The broker sends retained
+			// messages right after the subscription. Anything later is live,
+			// mostly this gateway's own publishes echoed back (MQTT 3.1.1 has
+			// no no-local option), so it is ignored, and the subscription is
+			// dropped once the burst is surely over.
 			//
 			// ponytail: a reading published between connecting and the broker
 			// handling the subscription replaces its retained state before it
 			// is read back, so that device starts afresh. Hold back publishing
 			// until subscribed if that bites.
 			topics := []string{g.deviceTopic("+")}
+			if g.ha {
+				topics = append(topics, g.haPrefix+"/device/+/config")
+			}
 			for _, t := range topics {
 				c.Subscribe(t, g.qos, func(_ mqtt.Client, m mqtt.Message) {
 					if m.Retained() {
@@ -373,8 +376,9 @@ type gateway struct {
 
 // device is the merged last-known state of one device.
 type device struct {
-	objs     map[string]bthome.Object // by state key; includes events, excludes 0xF0-0xF2
-	restored map[string]any           // retained state from before a restart; live keys override it
+	objs     map[string]bthome.Object  // by state key; includes events, excludes 0xF0-0xF2
+	restored map[string]any            // retained state from before a restart; live keys override it
+	cmps     map[string]map[string]any // retained discovery components from before a restart; current ones override them
 	model    uint16
 	name     string
 	firmware string
@@ -447,11 +451,6 @@ func (g *gateway) messages(r blugw.Reading) []message {
 	}
 
 	var msgs []message
-	// ponytail: after a restart the config lists just the keys seen since. A
-	// running HA keeps the omitted entities, but once HA restarts they stay
-	// unavailable until their keys are seen again (an H&T button until its
-	// next press). Reload the component set from the retained config at
-	// startup if that bites.
 	if g.ha {
 		gen := g.conn.Load()
 		if cfg := g.discovery(r.MAC, d); gen != d.gen || !bytes.Equal(cfg, d.config) {
@@ -501,12 +500,26 @@ func (g *gateway) messages(r blugw.Reading) []message {
 	return append(msgs, events...)
 }
 
-// restore merges a retained state that this gateway published, usually
-// before a restart, into its device. Anything else is ignored.
+// restore merges a retained state or discovery config that this gateway
+// published, usually before a restart, into its device. Anything else is
+// ignored.
 func (g *gateway) restore(topic string, payload []byte) {
-	var state map[string]any
-	m, ok := strings.CutPrefix(topic, g.prefix+"/device/")
-	if !ok || json.Unmarshal(payload, &state) != nil || state["gateway"] != g.name {
+	var (
+		m     string
+		state map[string]any
+		cfg   struct {
+			Origin     struct{ Name string }
+			Device     struct{ Identifiers []string }
+			Components map[string]map[string]any
+		}
+	)
+	// Configs first, as the prefixes may be the same.
+	if s, ok := strings.CutPrefix(topic, g.haPrefix+"/device/blugw_"); ok {
+		m, ok = strings.CutSuffix(s, "/config")
+		if !ok || json.Unmarshal(payload, &cfg) != nil || cfg.Origin.Name != "blugw-mqtt" || !slices.Contains(cfg.Device.Identifiers, "blugw_"+m) {
+			return
+		}
+	} else if m, ok = strings.CutPrefix(topic, g.prefix+"/device/"); !ok || json.Unmarshal(payload, &state) != nil || state["gateway"] != g.name {
 		return
 	}
 	b, err := hex.DecodeString(m)
@@ -520,8 +533,13 @@ func (g *gateway) restore(topic string, payload []byte) {
 
 	g.devMu.Lock()
 	defer g.devMu.Unlock()
-	delete(state, "name") // from BLUGW_NAMES, which may have changed
-	g.device(mac).restored = state
+	d := g.device(mac)
+	if state != nil {
+		delete(state, "name") // from BLUGW_NAMES, which may have changed
+		d.restored = state
+	} else {
+		d.cmps = cfg.Components
+	}
 }
 
 func isEvent(o bthome.Object) bool { return o.ID >= 0x3A && o.ID <= 0x3C }

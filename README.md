@@ -205,9 +205,11 @@ Each state key becomes an entity:
 A BLU H&T shows Temperature, Humidity and Battery, with Rssi and Packet Id
 under diagnostics. Its Button entity appears after the first press: entities
 are added as their keys are first seen, and the config is republished when the
-set of keys or the device info changes. The first event for each event key after
-startup is published about 2 seconds late, so that Home Assistant has time to
-subscribe to a new event entity.
+set of keys or the device info changes. A restart does not drop entities: on
+connecting, blugw-mqtt reads back its retained configs and keeps their
+entities, even those whose keys have not been seen since. The first event for
+each event key after startup is published about 2 seconds late, so that Home
+Assistant has time to subscribe to a new event entity.
 
 Every entity's availability follows the gateway status topic. When the gateway
 stops, or its connection to the broker drops, its devices show as unavailable.
@@ -428,14 +430,13 @@ follows:
   again is reported only when the bytes change.
 - **BTHome v1**: not supported.
 - **State is kept on the broker**: blugw-mqtt stores nothing on disk. After a
-  restart it restores the state from the broker's retained messages, which
-  needs permission to subscribe to `blugw/device/+`. If the broker has lost
+  restart it restores the state and the Home Assistant config from the
+  broker's retained messages, which needs permission to subscribe to
+  `blugw/device/+` and `homeassistant/device/+/config`. If the broker has lost
   them too, for example Mosquitto without `persistence true` restarted at the
-  same time, the state holds only keys seen since.
-- **Home Assistant config is in memory**: after a restart, the config holds
-  only keys seen since. Entities whose keys have not been seen yet, such as an
-  H&T button until its next press, may show as unavailable after Home
-  Assistant restarts.
+  same time, they hold only keys seen since, and entities whose keys have not
+  been seen yet, such as an H&T button until its next press, may show as
+  unavailable after Home Assistant restarts.
 - **Listening only**: blugw does not configure devices or send them commands.
 
 ## Roadmap
