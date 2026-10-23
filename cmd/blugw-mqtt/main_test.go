@@ -28,19 +28,19 @@ func TestParseConfig(t *testing.T) {
 		want string // see render
 		err  string // substring of the error, if one is expected
 	}{
-		{"defaults", map[string]string{}, "url=" + url + " user= name=" + host + " prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO", ""},
+		{"defaults", map[string]string{}, "url=" + url + " user= name=" + host + " prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1", ""},
 		{"all set", map[string]string{"BLUGW_MQTT_USER": "u", "BLUGW_MQTT_PASSWORD": "p", "BLUGW_NAME": "attic.local", "BLUGW_PREFIX": "home/ble", "BLUGW_WATCHDOG": "90s", "BLUGW_HA": "true", "BLUGW_HA_PREFIX": "ha", "BLUGW_LOG_LEVEL": "debug"},
-			"url=" + url + " user=u name=attic.local prefix=home/ble keys=[] allow=all watchdog=1m30s ha=true haPrefix=ha level=DEBUG", ""},
-		{"watchdog 0", map[string]string{"BLUGW_NAME": "gw", "BLUGW_WATCHDOG": "0"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=0s ha=false haPrefix=homeassistant level=INFO", ""},
+			"url=" + url + " user=u name=attic.local prefix=home/ble keys=[] allow=all watchdog=1m30s ha=true haPrefix=ha level=DEBUG qos=1", ""},
+		{"watchdog 0", map[string]string{"BLUGW_NAME": "gw", "BLUGW_WATCHDOG": "0"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=0s ha=false haPrefix=homeassistant level=INFO qos=1", ""},
 		{"keys", map[string]string{"BLUGW_NAME": "gw", "BLUGW_KEYS": " 38-39-8f-8c-77-da=" + key + ", ,B4:35:22:F5:3D:A4=" + strings.ToUpper(key) + ","},
-			"url=" + url + " user= name=gw prefix=blugw keys=[38:39:8F:8C:77:DA=" + key + " B4:35:22:F5:3D:A4=" + key + "] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO", ""},
-		{"include", map[string]string{"BLUGW_NAME": "gw", "BLUGW_INCLUDE": "38:39:8f:8c:77:da, 7c-c6-b6-73-ab-4e"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=+a+b-c watchdog=5m0s ha=false haPrefix=homeassistant level=INFO", ""},
-		{"exclude", map[string]string{"BLUGW_NAME": "gw", "BLUGW_EXCLUDE": "B0:C7:DE:42:1F:D5"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=+a+b-c watchdog=5m0s ha=false haPrefix=homeassistant level=INFO", ""},
-		{"include and exclude", map[string]string{"BLUGW_NAME": "gw", "BLUGW_INCLUDE": "38:39:8F:8C:77:DA,7C:C6:B6:73:AB:4E", "BLUGW_EXCLUDE": "7C:C6:B6:73:AB:4E"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=+a-b-c watchdog=5m0s ha=false haPrefix=homeassistant level=INFO", ""},
+			"url=" + url + " user= name=gw prefix=blugw keys=[38:39:8F:8C:77:DA=" + key + " B4:35:22:F5:3D:A4=" + key + "] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1", ""},
+		{"include", map[string]string{"BLUGW_NAME": "gw", "BLUGW_INCLUDE": "38:39:8f:8c:77:da, 7c-c6-b6-73-ab-4e"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=+a+b-c watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1", ""},
+		{"exclude", map[string]string{"BLUGW_NAME": "gw", "BLUGW_EXCLUDE": "B0:C7:DE:42:1F:D5"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=+a+b-c watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1", ""},
+		{"include and exclude", map[string]string{"BLUGW_NAME": "gw", "BLUGW_INCLUDE": "38:39:8F:8C:77:DA,7C:C6:B6:73:AB:4E", "BLUGW_EXCLUDE": "7C:C6:B6:73:AB:4E"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=+a-b-c watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1", ""},
 
-		{"TLS URL", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_URL": "ssl://broker:8883"}, "url=ssl://broker:8883 user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO", ""},
-		{"websocket URL", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_URL": "wss://broker/mqtt"}, "url=wss://broker/mqtt user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO", ""},
-		{"unix URL", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_URL": "unix:///run/mosquitto.sock"}, "url=unix:///run/mosquitto.sock user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO", ""},
+		{"TLS URL", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_URL": "ssl://broker:8883"}, "url=ssl://broker:8883 user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1", ""},
+		{"websocket URL", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_URL": "wss://broker/mqtt"}, "url=wss://broker/mqtt user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1", ""},
+		{"unix URL", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_URL": "unix:///run/mosquitto.sock"}, "url=unix:///run/mosquitto.sock user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1", ""},
 
 		{"no URL", map[string]string{"BLUGW_MQTT_URL": ""}, "", "BLUGW_MQTT_URL"},
 		{"URL without scheme", map[string]string{"BLUGW_MQTT_URL": "broker:1883"}, "", "BLUGW_MQTT_URL"},
@@ -71,6 +71,14 @@ func TestParseConfig(t *testing.T) {
 		{"bad watchdog", map[string]string{"BLUGW_WATCHDOG": "5"}, "", "BLUGW_WATCHDOG"},
 		{"negative watchdog", map[string]string{"BLUGW_WATCHDOG": "-1m"}, "", "BLUGW_WATCHDOG"},
 		{"bad HA", map[string]string{"BLUGW_HA": "yes"}, "", "BLUGW_HA"},
+		{"QoS 0", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_QOS": "0"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=0", ""},
+		{"QoS 2", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_QOS": "2"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=2", ""},
+		{"bad QoS", map[string]string{"BLUGW_MQTT_QOS": "3"}, "", "BLUGW_MQTT_QOS"},
+		{"QoS not a number", map[string]string{"BLUGW_MQTT_QOS": "one"}, "", "BLUGW_MQTT_QOS"},
+		{"names", map[string]string{"BLUGW_NAME": "gw", "BLUGW_NAMES": " 38-39-8f-87-2b-3e = Office, upstairs ;; 7C:C6:B6:09:89:8F=Garden;"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1 names=[\"38:39:8F:87:2B:3E=Office, upstairs\" \"7C:C6:B6:09:89:8F=Garden\"]", ""},
+		{"name without MAC", map[string]string{"BLUGW_NAMES": "Office"}, "", `BLUGW_NAMES: "Office"`},
+		{"name with bad MAC", map[string]string{"BLUGW_NAMES": "38:39:8F:87:2B=Office"}, "", "BLUGW_NAMES"},
+		{"empty name", map[string]string{"BLUGW_NAMES": "38:39:8F:87:2B:3E= "}, "", "BLUGW_NAMES"},
 		{"bad log level", map[string]string{"BLUGW_LOG_LEVEL": "loud"}, "", "BLUGW_LOG_LEVEL"},
 	}
 	for _, tc := range tests {
@@ -123,8 +131,17 @@ func render(c config) string {
 			allow += sign + string(rune('a'+i))
 		}
 	}
-	return fmt.Sprintf("url=%s user=%s name=%s prefix=%s keys=%v allow=%s watchdog=%s ha=%v haPrefix=%s level=%s",
-		c.url, c.user, c.name, c.prefix, keys, allow, c.opts.Watchdog, c.ha, c.haPrefix, c.level)
+	out := fmt.Sprintf("url=%s user=%s name=%s prefix=%s keys=%v allow=%s watchdog=%s ha=%v haPrefix=%s level=%s qos=%d",
+		c.url, c.user, c.name, c.prefix, keys, allow, c.opts.Watchdog, c.ha, c.haPrefix, c.level, c.qos)
+	if len(c.names) > 0 {
+		var names []string
+		for m, n := range c.names {
+			names = append(names, m.String()+"="+n)
+		}
+		slices.Sort(names)
+		out += fmt.Sprintf(" names=%q", names)
+	}
+	return out
 }
 
 var testMAC = bthome.MAC{0x38, 0x39, 0x8F, 0x8C, 0x77, 0xDA}
@@ -161,7 +178,7 @@ func show(msgs []message) []string {
 
 // TestMessages runs with Home Assistant discovery off, so wants are exact.
 func TestMessages(t *testing.T) {
-	const state = "blugw/38398f8c77da retained "
+	const state = "blugw/device/38398f8c77da retained "
 	type step struct {
 		r    blugw.Reading
 		want []string
@@ -172,7 +189,7 @@ func TestMessages(t *testing.T) {
 	}{
 		{"H&T", []step{
 			{reading(t, "44000901552e3745c300", 3, "SBHT-003C"), []string{
-				state + `{"battery":85,"encrypted":false,"gateway":"test","humidity":55,"mac":"38:39:8F:8C:77:DA","model_id":3,"name":"SBHT-003C","packet_id":9,"rssi":-68,"temperature":19.5,"time":"2026-10-23T17:57:14.348Z"}`,
+				state + `{"battery":85,"encrypted":false,"gateway":"test","humidity":55,"local_name":"SBHT-003C","mac":"38:39:8F:8C:77:DA","model_id":3,"packet_id":9,"rssi":-68,"temperature":19.5,"time":"2026-10-23T17:57:14.348Z"}`,
 			}},
 		}},
 		{"device info merges", []step{
@@ -186,11 +203,11 @@ func TestMessages(t *testing.T) {
 		{"Wall Switch 4", []step{
 			{reading(t, "44001d01643a013a003a003a00", 6, ""), []string{
 				state + `{"battery":100,"encrypted":false,"gateway":"test","mac":"38:39:8F:8C:77:DA","model_id":6,"packet_id":29,"rssi":-68,"time":"2026-10-23T17:57:14.348Z"}`,
-				`blugw/38398f8c77da/event/button {"event_type":"press"}`,
+				`blugw/device/38398f8c77da/event/button {"event_type":"press"}`,
 			}},
 			{reading(t, "44001e01643a003a003a013a00", 6, ""), []string{
 				state + `{"battery":100,"encrypted":false,"gateway":"test","mac":"38:39:8F:8C:77:DA","model_id":6,"packet_id":30,"rssi":-68,"time":"2026-10-23T17:57:14.348Z"}`,
-				`blugw/38398f8c77da/event/button_3 {"event_type":"press"}`,
+				`blugw/device/38398f8c77da/event/button_3 {"event_type":"press"}`,
 			}},
 		}},
 		{"Door/Window", []step{
@@ -204,14 +221,14 @@ func TestMessages(t *testing.T) {
 		{"dimmer and command", []step{
 			{reading(t, "403c0103", 0, ""), []string{
 				state + `{"encrypted":false,"gateway":"test","mac":"38:39:8F:8C:77:DA","rssi":-68,"time":"2026-10-23T17:57:14.348Z"}`,
-				`blugw/38398f8c77da/event/dimmer {"event_type":"rotate_left","steps":3}`,
+				`blugw/device/38398f8c77da/event/dimmer {"event_type":"rotate_left","steps":3}`,
 			}},
 			{reading(t, "403c0000", 0, ""), []string{
 				state + `{"encrypted":false,"gateway":"test","mac":"38:39:8F:8C:77:DA","rssi":-68,"time":"2026-10-23T17:57:14.348Z"}`,
 			}},
 			{reading(t, "403b010305", 0, ""), []string{
 				state + `{"encrypted":false,"gateway":"test","mac":"38:39:8F:8C:77:DA","rssi":-68,"time":"2026-10-23T17:57:14.348Z"}`,
-				`blugw/38398f8c77da/event/command {"args":"05","event_type":"step_up"}`,
+				`blugw/device/38398f8c77da/event/command {"args":"05","event_type":"step_up"}`,
 			}},
 		}},
 		{"text and raw", []step{
@@ -240,14 +257,14 @@ const htConfig = `{"availability_topic":"blugw/gateway/test/status","components"
 	`"38398f8c77da_rssi":{"device_class":"signal_strength","entity_category":"diagnostic","name":"Rssi","platform":"sensor","state_class":"measurement","unique_id":"blugw_38398f8c77da_rssi","unit_of_measurement":"dBm","value_template":"{{ value_json.rssi }}"},` +
 	`"38398f8c77da_temperature":{"device_class":"temperature","name":"Temperature","platform":"sensor","state_class":"measurement","unique_id":"blugw_38398f8c77da_temperature","unit_of_measurement":"°C","value_template":"{% if value_json.temperature is defined %}{{ value_json.temperature }}{% endif %}"}},` +
 	`"device":{"connections":[["bluetooth","38:39:8f:8c:77:da"]],"identifiers":["blugw_38398f8c77da"],"manufacturer":"Shelly","model":"BLU H&T","model_id":"SBHT-003C","name":"BLU H&T 77DA"},` +
-	`"origin":{"name":"blugw-mqtt","support_url":"https://github.com/3ft9/blugw"},"qos":1,"state_topic":"blugw/38398f8c77da"}`
+	`"origin":{"name":"blugw-mqtt","support_url":"https://github.com/3ft9/blugw"},"qos":1,"state_topic":"blugw/device/38398f8c77da"}`
 
 func TestDiscovery(t *testing.T) {
 	const (
 		disc  = "homeassistant/device/blugw_38398f8c77da/config"
-		state = "blugw/38398f8c77da"
+		state = "blugw/device/38398f8c77da"
 	)
-	g := newGateway(config{name: "test", prefix: "blugw", ha: true, haPrefix: "homeassistant"})
+	g := newGateway(config{name: "test", prefix: "blugw", ha: true, haPrefix: "homeassistant", qos: 1})
 	steps := []struct {
 		name      string
 		r         blugw.Reading
@@ -260,7 +277,7 @@ func TestDiscovery(t *testing.T) {
 		{"reconnect", reading(t, "44000b01592e3745c300", 3, "SBHT-003C"), true, []string{disc, state}, htConfig},
 		{"firmware", reading(t, "44000c0164f00300f100170001", 3, "SBHT-003C"), false, []string{disc, state}, `"sw_version":"1.0.23.0"`},
 		{"button before its event", reading(t, "4400ae01642e383afe45aaff", 3, "SBHT-003C"), false, []string{disc, state, state + "/event/button delayed"},
-			`"38398f8c77da_button":{"device_class":"button","event_types":["press","double_press","triple_press","long_press","long_double_press","long_triple_press","hold_press"],"name":"Button","platform":"event","state_topic":"blugw/38398f8c77da/event/button","unique_id":"blugw_38398f8c77da_button"}`},
+			`"38398f8c77da_button":{"device_class":"button","event_types":["press","double_press","triple_press","long_press","long_double_press","long_triple_press","hold_press"],"name":"Button","platform":"event","state_topic":"blugw/device/38398f8c77da/event/button","unique_id":"blugw_38398f8c77da_button"}`},
 		{"button again", reading(t, "4400af01643a01", 3, "SBHT-003C"), false, []string{state, state + "/event/button"}, ""},
 		{"safety inverted", reading(t, "402801", 3, "SBHT-003C"), false, []string{disc, state},
 			`"38398f8c77da_safety":{"device_class":"safety","name":"Safety","platform":"binary_sensor","unique_id":"blugw_38398f8c77da_safety","value_template":"{% if value_json.safety is defined %}{{ 'OFF' if value_json.safety else 'ON' }}{% endif %}"}`},
@@ -301,5 +318,19 @@ func TestDiscovery(t *testing.T) {
 		case !strings.Contains(got, s.config):
 			t.Errorf("%s: config\n%s\ndoes not contain\n%s", s.name, got, s.config)
 		}
+	}
+}
+
+func TestNames(t *testing.T) {
+	g := newGateway(config{name: "test", prefix: "blugw", ha: true, haPrefix: "homeassistant", qos: 1, names: map[bthome.MAC]string{testMAC: "Office"}})
+	msgs := g.messages(reading(t, "44000901552e3745c300", 3, "SBHT-003C"))
+	if len(msgs) != 2 {
+		t.Fatalf("got %d messages, want config and state", len(msgs))
+	}
+	if cfg := string(msgs[0].payload); !strings.Contains(cfg, `"name":"Office"}`) {
+		t.Errorf("device name not set in config: %s", cfg)
+	}
+	if state := string(msgs[1].payload); !strings.Contains(state, `"local_name":"SBHT-003C","mac":"38:39:8F:8C:77:DA","model_id":3,"name":"Office"`) {
+		t.Errorf("name not in state: %s", state)
 	}
 }

@@ -102,7 +102,7 @@ func (g *gateway) discovery(mac bthome.MAC, d *device) []byte {
 	model := shellyModels[d.model]
 	dev := map[string]any{
 		"identifiers": []string{"blugw_" + m},
-		"name":        cmp.Or(model, d.name, "BTHome") + " " + strings.ToUpper(m[8:]),
+		"name":        cmp.Or(g.names[mac], cmp.Or(model, d.name, "BTHome")+" "+strings.ToUpper(m[8:])),
 		"connections": [][]string{{"bluetooth", strings.ToLower(mac.String())}},
 	}
 	if model != "" {
@@ -118,9 +118,9 @@ func (g *gateway) discovery(mac bthome.MAC, d *device) []byte {
 	return marshal(map[string]any{
 		"device":             dev,
 		"origin":             map[string]any{"name": "blugw-mqtt", "support_url": "https://github.com/3ft9/blugw"},
-		"state_topic":        g.prefix + "/" + m,
+		"state_topic":        g.deviceTopic(m),
 		"availability_topic": g.status(),
-		"qos":                1,
+		"qos":                g.qos,
 		"components":         cmps,
 	})
 }
@@ -134,7 +134,7 @@ func (g *gateway) component(m, k string, o bthome.Object) map[string]any {
 	switch {
 	case isEvent(o):
 		c["platform"] = "event"
-		c["state_topic"] = g.prefix + "/" + m + "/event/" + k
+		c["state_topic"] = g.deviceTopic(m) + "/event/" + k
 		c["event_types"] = eventTypes[o.ID]
 		if o.ID == 0x3A {
 			c["device_class"] = "button"

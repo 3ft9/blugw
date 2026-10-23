@@ -47,10 +47,12 @@ blugw-mqtt reads its configuration only from environment variables. Run
 | `BLUGW_MQTT_URL` | required | Broker URL: `tcp://host:1883` or `mqtt://` (plain), `ssl://host:8883`, `tls://` or `mqtts://` (TLS), `ws://host:8080/mqtt` or `wss://` (WebSocket), or `unix:///path/to/socket`. TCP and TLS URLs need a port. |
 | `BLUGW_MQTT_USER` | | Broker user name. |
 | `BLUGW_MQTT_PASSWORD` | | Broker password. |
+| `BLUGW_MQTT_QOS` | `1` | MQTT QoS for every message: `0`, `1` or `2`. See [Delivery](#delivery). |
 | `BLUGW_NAME` | host name | Gateway name. It is used in the status topic and the MQTT client ID `blugw-<name>`. It must be one topic level, so no `/`, `+` or `#`. |
 | `BLUGW_PREFIX` | `blugw` | Topic prefix. One or more topic levels, such as `home/ble`. No `+`, `#`, empty levels or leading `$`. |
 | `BLUGW_INCLUDE` | | Comma-separated MACs. When set, only these devices are processed. |
 | `BLUGW_EXCLUDE` | | Comma-separated MACs that are never processed. |
+| `BLUGW_NAMES` | | Semicolon-separated `MAC=name` pairs, such as `38:39:8F:87:2B:3E=Office;7C:C6:B6:09:89:8F=Garden`. Names appear in the state JSON and as Home Assistant device names. Shelly app names are not available over Bluetooth, so they have to be set here. |
 | `BLUGW_KEYS` | | Comma-separated `MAC=key` pairs for encrypted devices. Each key is 32 hex digits. |
 | `BLUGW_WATCHDOG` | `5m` | Restart scanning when no BTHome advertisement has arrived for this long, as a Go duration. `0` disables it. |
 | `BLUGW_HA` | `false` | Publish Home Assistant MQTT discovery: `true` or `false`. |
@@ -69,13 +71,13 @@ status 2. If it cannot enable the Bluetooth adapter, it exits with status 1.
 
 In the topics below, `blugw` is the default `BLUGW_PREFIX`, and `<mac>` is
 the device MAC as 12 lower-case hex digits, such as `38398f872b3e`. Every
-message is published with QoS 1.
+message is published with QoS `BLUGW_MQTT_QOS` (default 1).
 
 | Topic | Payload | Retained |
 | --- | --- | --- |
 | `blugw/gateway/<name>/status` | `online` or `offline` | yes |
-| `blugw/<mac>` | device state, JSON | yes |
-| `blugw/<mac>/event/<key>` | event, JSON | no |
+| `blugw/device/<mac>` | device state, JSON | yes |
+| `blugw/device/<mac>/event/<key>` | event, JSON | no |
 
 ### Gateway status
 
@@ -94,9 +96,10 @@ The state is published after every reading. This is a Shelly BLU H&T reading
   "encrypted": false,
   "gateway": "pi",
   "humidity": 54,
+  "local_name": "SBHT-003C",
   "mac": "38:39:8F:87:2B:3E",
   "model_id": 3,
-  "name": "SBHT-003C",
+  "name": "Office",
   "packet_id": 214,
   "rssi": -66,
   "temperature": 20,
@@ -112,7 +115,8 @@ The state is published after every reading. This is a Shelly BLU H&T reading
 | `time` | When the latest reading was received, in RFC 3339 UTC with milliseconds. |
 | `encrypted` | Whether the latest reading was encrypted. |
 | `model_id` | Shelly model ID, such as 3 for the BLU H&T. Omitted until known. |
-| `name` | Advertised local name. Omitted until known. |
+| `name` | Name from `BLUGW_NAMES`. Omitted if the device has none. |
+| `local_name` | Advertised local name, which for Shelly devices is the model code. Omitted until known. |
 | `firmware` | Firmware version from a device-info packet, such as `1.0.23.0`. Omitted until known. |
 
 Every other key is a BTHome object, named in snake_case as in the
@@ -142,7 +146,7 @@ the device type and firmware objects, which become `model_id` and `firmware`.
 ### Events
 
 Each button, dimmer or command event is published to
-`blugw/<mac>/event/<key>`. The key follows the same rules as the state keys.
+`blugw/device/<mac>/event/<key>`. The key follows the same rules as the state keys.
 For example, a press of the third button on a BLU Wall Switch 4 is published to
 `.../event/button_3`. A button position that reports no event publishes
 nothing.
@@ -150,7 +154,7 @@ nothing.
 This is a press of a Shelly BLU Button1:
 
 ```
-blugw/b43522f53da4/event/button  {"event_type":"press"}
+blugw/device/b43522f53da4/event/button  {"event_type":"press"}
 ```
 
 | Object | `event_type` | Extra fields |
@@ -166,7 +170,8 @@ even if the broker is down. While it is disconnected, messages are dropped, not
 queued. The retained state comes back with the next reading, but events that
 happen during the outage are lost. Messages that were sent but not
 acknowledged when a connection dropped are resent after it reconnects, so a
-few events may arrive late.
+few events may arrive late. With `BLUGW_MQTT_QOS=0` nothing is resent: those
+events are lost instead of late.
 
 ## Home Assistant
 
@@ -176,9 +181,10 @@ which needs Home Assistant 2024.11 or later. The Home Assistant MQTT
 integration must use the same broker. Each device gets one retained config at
 `homeassistant/device/blugw_<mac>/config`.
 
-Each device is named after its Shelly model, plus the last four hex digits of
-its MAC, such as `BLU H&T 2B3E`. Devices that are not known Shelly models use
-their advertised name instead, or `BTHome` if they have none. The device info
+Each device takes its name from `BLUGW_NAMES`. Without one, it is named after
+its Shelly model plus the last four hex digits of its MAC, such as
+`BLU H&T 2B3E`; devices that are not known Shelly models use their advertised
+name instead, or `BTHome` if they have none. The device info
 shows the manufacturer and model (for Shelly models), the model ID (the
 advertised name, such as `SBHT-003C`) and the firmware version.
 
@@ -247,9 +253,13 @@ Encrypted BTHome devices need their AES key:
 BLUGW_KEYS=38:39:8F:8C:77:DA=<32 hex digits>,7C:C6:B6:75:39:3C=<32 hex digits>
 ```
 
-For a Shelly BLU device, enable encryption in the Shelly app and copy its key
-from there. The keys are secrets, so keep the environment file readable only
-by root (see [Deployment](#deployment)).
+For a Shelly BLU device, Shelly documents reading the key from the device
+itself: pair with it in Shelly's BLE Debug app (this needs the PIN that was
+set when encryption was enabled) and read the 16-byte "Encryption key"
+characteristic. A Shelly gateway that already has the key will not reveal it.
+If that is more trouble than it is worth, the Shelly app's Decrypt option turns
+encryption off. The keys are secrets, so keep the environment file readable
+only by root (see [Deployment](#deployment)).
 
 blugw handles encrypted packets as follows:
 

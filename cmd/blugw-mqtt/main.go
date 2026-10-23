@@ -41,11 +41,14 @@ publishes their readings to MQTT. It is configured with environment variables:
                        ws://host:8080/mqtt (required)
   BLUGW_MQTT_USER      broker user name
   BLUGW_MQTT_PASSWORD  broker password
+  BLUGW_MQTT_QOS       MQTT QoS for every message: 0, 1 or 2 (default: 1)
   BLUGW_NAME           gateway name (default: host name)
   BLUGW_PREFIX         topic prefix (default: blugw)
   BLUGW_INCLUDE        comma-separated MACs; if set, only these devices are
                        published
   BLUGW_EXCLUDE        comma-separated MACs that are never published
+  BLUGW_NAMES          semicolon-separated MAC=name pairs naming devices, e.g.
+                       38:39:8F:87:2B:3E=Office;7C:C6:B6:09:89:8F=Garden
   BLUGW_KEYS           comma-separated MAC=key pairs for encrypted devices;
                        each key is 32 hex digits
   BLUGW_WATCHDOG       restart scanning when no BTHome advert has arrived for
@@ -58,8 +61,9 @@ publishes their readings to MQTT. It is configured with environment variables:
 Topics, with <mac> as 12 lower-case hex digits:
 
   <prefix>/gateway/<name>/status   online or offline (retained)
-  <prefix>/<mac>                   last known device state as JSON (retained)
-  <prefix>/<mac>/event/<key>       button, dimmer and command events as JSON
+  <prefix>/device/<mac>            last known device state as JSON (retained)
+  <prefix>/device/<mac>/event/<key>
+                                   button, dimmer and command events as JSON
 `
 
 func main() {
@@ -81,7 +85,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	context.AfterFunc(ctx, stop) // a second signal kills a hung shutdown
 	code := 0
-	err = blugw.Scan(ctx, cfg.opts, func(r blugw.Reading) { publish(c, g.messages(r)) })
+	err = blugw.Scan(ctx, cfg.opts, func(r blugw.Reading) { publish(c, g.qos, g.messages(r)) })
 	if ctx.Err() == nil {
 		slog.Error("blugw-mqtt: scanning failed", "err", err)
 		code = 1
@@ -90,7 +94,7 @@ func main() {
 	g.stopping = true
 	g.mu.Unlock()
 	// Without a clean disconnect the broker publishes the will, "offline".
-	if t := c.Publish(g.status(), 1, true, "offline"); t.WaitTimeout(2*time.Second) && t.Error() == nil {
+	if t := c.Publish(g.status(), g.qos, true, "offline"); t.WaitTimeout(2*time.Second) && t.Error() == nil {
 		c.Disconnect(250)
 	}
 	os.Exit(code)
@@ -112,13 +116,13 @@ func connect(g *gateway) mqtt.Client {
 		SetConnectRetry(true).
 		SetConnectRetryInterval(10*time.Second).
 		SetMaxReconnectInterval(time.Minute).
-		SetWill(g.status(), "offline", 1, true).
+		SetWill(g.status(), "offline", g.qos, true).
 		SetOnConnectHandler(func(c mqtt.Client) {
 			g.conn.Add(1)
 			g.mu.Lock()
 			defer g.mu.Unlock()
 			if !g.stopping {
-				c.Publish(g.status(), 1, true, "online")
+				c.Publish(g.status(), g.qos, true, "online")
 			}
 		}).
 		SetConnectionNotificationHandler(func(_ mqtt.Client, n mqtt.ConnectionNotification) {
@@ -135,21 +139,22 @@ func connect(g *gateway) mqtt.Client {
 	return c
 }
 
-// publish sends msgs at QoS 1 without waiting for acknowledgements. While
+// publish sends msgs without waiting for acknowledgements. While
 // disconnected it drops them rather than queueing, as state is retained and
-// republished with the next reading. Messages sent but unacknowledged when a
-// connection drops are resent, in order, after reconnecting, so events sent
-// before keepalive notices a dead connection arrive late.
-func publish(c mqtt.Client, msgs []message) {
+// republished with the next reading. At QoS 1 and 2, messages sent but
+// unacknowledged when a connection drops are resent, in order, after
+// reconnecting, so events sent before keepalive notices a dead connection
+// arrive late; QoS 0 loses them instead.
+func publish(c mqtt.Client, qos byte, msgs []message) {
 	for _, m := range msgs {
 		if m.delay {
 			m.delay = false
-			time.AfterFunc(2*time.Second, func() { publish(c, []message{m}) })
+			time.AfterFunc(2*time.Second, func() { publish(c, qos, []message{m}) })
 			continue
 		}
 		slog.Debug("publish", "topic", m.topic, "retain", m.retain, "payload", string(m.payload))
 		if c.IsConnectionOpen() {
-			c.Publish(m.topic, 1, m.retain, m.payload)
+			c.Publish(m.topic, qos, m.retain, m.payload)
 		}
 	}
 }
@@ -161,6 +166,8 @@ type config struct {
 	ha                  bool
 	haPrefix            string
 	level               slog.Level
+	qos                 byte
+	names               map[bthome.MAC]string
 }
 
 func parseConfig(getenv func(string) string) (config, error) {
@@ -171,6 +178,7 @@ func parseConfig(getenv func(string) string) (config, error) {
 		name:     getenv("BLUGW_NAME"),
 		prefix:   cmp.Or(getenv("BLUGW_PREFIX"), "blugw"),
 		haPrefix: cmp.Or(getenv("BLUGW_HA_PREFIX"), "homeassistant"),
+		qos:      1,
 		opts:     blugw.Options{Watchdog: 5 * time.Minute},
 	}
 	const wantURL = "want e.g. tcp://host:1883, ssl://host:8883 or ws://host:8080/mqtt"
@@ -223,6 +231,21 @@ func parseConfig(getenv func(string) string) (config, error) {
 		}
 	}
 
+	for item := range strings.SplitSeq(getenv("BLUGW_NAMES"), ";") {
+		if item = strings.TrimSpace(item); item == "" {
+			continue
+		}
+		ms, name, _ := strings.Cut(item, "=")
+		mac, err := parseMAC(strings.TrimSpace(ms))
+		if name = strings.TrimSpace(name); err != nil || name == "" {
+			return c, fmt.Errorf("BLUGW_NAMES: %q: want MAC=name", item)
+		}
+		if c.names == nil {
+			c.names = map[bthome.MAC]string{}
+		}
+		c.names[mac] = name
+	}
+
 	for i, item := range list(getenv("BLUGW_KEYS")) {
 		ms, ks, _ := strings.Cut(item, "=")
 		mac, err := parseMAC(ms)
@@ -248,6 +271,13 @@ func parseConfig(getenv func(string) string) (config, error) {
 		if c.ha, err = strconv.ParseBool(s); err != nil {
 			return c, fmt.Errorf("BLUGW_HA %q: want true or false", s)
 		}
+	}
+	if s := getenv("BLUGW_MQTT_QOS"); s != "" {
+		q, err := strconv.ParseUint(s, 10, 8)
+		if err != nil || q > 2 {
+			return c, fmt.Errorf("BLUGW_MQTT_QOS %q: want 0, 1 or 2", s)
+		}
+		c.qos = byte(q)
 	}
 	if s := getenv("BLUGW_LOG_LEVEL"); s != "" {
 		if err := c.level.UnmarshalText([]byte(s)); err != nil {
@@ -331,6 +361,8 @@ func newGateway(c config) *gateway {
 
 func (g *gateway) status() string { return g.prefix + "/gateway/" + g.name + "/status" }
 
+func (g *gateway) deviceTopic(m string) string { return g.prefix + "/device/" + m }
+
 // messages merges r into its device's state and returns what to publish, in
 // order: the discovery config when it is new or changed or the broker
 // reconnected, the state, then any events.
@@ -375,7 +407,7 @@ func (g *gateway) messages(r blugw.Reading) []message {
 			if o.ID == 0x3B && len(o.Raw) > 0 {
 				p["args"] = hex.EncodeToString(o.Raw)
 			}
-			events = append(events, message{g.prefix + "/" + m + "/event/" + k, marshal(p), false, g.ha && !known})
+			events = append(events, message{g.deviceTopic(m) + "/event/" + k, marshal(p), false, g.ha && !known})
 		}
 	}
 
@@ -403,8 +435,11 @@ func (g *gateway) messages(r blugw.Reading) []message {
 	if d.model != 0 {
 		s["model_id"] = d.model
 	}
+	if n := g.names[r.MAC]; n != "" {
+		s["name"] = n
+	}
 	if d.name != "" {
-		s["name"] = d.name
+		s["local_name"] = d.name
 	}
 	if d.firmware != "" {
 		s["firmware"] = d.firmware
@@ -422,7 +457,7 @@ func (g *gateway) messages(r blugw.Reading) []message {
 			s[k] = o.Value
 		}
 	}
-	msgs = append(msgs, message{g.prefix + "/" + m, marshal(s), true, false})
+	msgs = append(msgs, message{g.deviceTopic(m), marshal(s), true, false})
 	return append(msgs, events...)
 }
 
