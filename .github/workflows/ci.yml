@@ -31,6 +31,14 @@ jobs:
         run: |
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /dev/null ./cmd/blugw-mqtt
           GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -o /dev/null ./cmd/blugw-mqtt
-      - name: govulncheck
-        if: runner.os == 'Linux'
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Current Go, not go.mod's minimum: govulncheck needs a recent toolchain
+      # and should judge the standard library users will actually build with.
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
