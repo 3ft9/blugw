@@ -71,6 +71,8 @@ func TestParseConfig(t *testing.T) {
 		{"bad watchdog", map[string]string{"BLUGW_WATCHDOG": "5"}, "", "BLUGW_WATCHDOG"},
 		{"negative watchdog", map[string]string{"BLUGW_WATCHDOG": "-1m"}, "", "BLUGW_WATCHDOG"},
 		{"bad HA", map[string]string{"BLUGW_HA": "yes"}, "", "BLUGW_HA"},
+		{"time beacon", map[string]string{"BLUGW_NAME": "gw", "BLUGW_TIME_BEACON": "true"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1 timeBeacon=true", ""},
+		{"bad time beacon", map[string]string{"BLUGW_TIME_BEACON": "on"}, "", "BLUGW_TIME_BEACON"},
 		{"QoS 0", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_QOS": "0"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=0", ""},
 		{"QoS 2", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_QOS": "2"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=2", ""},
 		{"bad QoS", map[string]string{"BLUGW_MQTT_QOS": "3"}, "", "BLUGW_MQTT_QOS"},
@@ -140,6 +142,9 @@ func render(c config) string {
 		}
 		slices.Sort(names)
 		out += fmt.Sprintf(" names=%q", names)
+	}
+	if c.opts.TimeBeacon {
+		out += " timeBeacon=true"
 	}
 	return out
 }

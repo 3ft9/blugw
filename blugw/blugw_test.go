@@ -1,8 +1,11 @@
 package blugw
 
 import (
+	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +118,45 @@ func TestHandle(t *testing.T) {
 		if got != st.want {
 			t.Errorf("%s:\n got  %s\n want %s", st.name, got, st.want)
 		}
+	}
+}
+
+func TestTimeBeacon(t *testing.T) {
+	plug := time.Unix(0x6adb91d7, 0) // 2026-10-23 16:56:55 UTC
+	tests := []struct {
+		zone string
+		at   time.Time
+		want string // 0D, time, standard offset, DST start, DST end, DST shift
+	}{
+		// Captured from a Shelly Plug: DST 2026-03-29 01:00 to 2026-10-25 01:00 UTC.
+		{"Europe/London", plug, "0dd791db6a000000009079c8699054dd6a100e0000"},
+		{"UTC", plug, "0dd791db6a00000000000000000000000000000000"},
+		{"Asia/Tokyo", plug, "0dd791db6a907e0000000000000000000000000000"},
+		// -5 h; DST 2026-03-08 07:00 to 2026-11-01 06:00 UTC.
+		{"America/New_York", plug, "0dd791db6ab0b9ffff701ead6960d5e66a100e0000"},
+		// DST from 2026-10-03 16:00 UTC, and until 2026-04-04 16:00 UTC.
+		{"Australia/Sydney", plug, "0dd791db6aa08c00008026c16a8035d169100e0000"},
+		// 2027-01-01 01:00 local: 2027's DST from 2027-10-02 and until 2027-04-03.
+		{"Australia/Sydney", time.Date(2026, 12, 31, 14, 0, 0, 0, time.UTC), "0de05f366ba08c00008008a16c8017b16b100e0000"},
+	}
+	for _, tc := range tests {
+		loc, err := time.LoadLocation(tc.zone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hex.EncodeToString(timeBeacon(tc.at, loc)); got != tc.want {
+			t.Errorf("%s at %v:\n got  %s\n want %s", tc.zone, tc.at, got, tc.want)
+		}
+	}
+}
+
+func TestScanTimeBeaconUnsupported(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("supported on Linux")
+	}
+	// Must fail before touching the adapter.
+	if err := Scan(context.Background(), Options{TimeBeacon: true}, nil); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
 	}
 }
 

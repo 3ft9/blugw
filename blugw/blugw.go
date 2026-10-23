@@ -7,8 +7,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
+	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +33,13 @@ type Options struct {
 	Keys     map[bthome.MAC][]byte // AES-128 keys for encrypted devices; unencrypted packets from these MACs are dropped
 	Watchdog time.Duration         // restart scanning when no BTHome advert has arrived for this long; 0 disables
 	Allow    func(bthome.MAC) bool // reports whether to process a device; nil allows all
+
+	// TimeBeacon broadcasts the Shelly time beacon, with time zone details
+	// from time.Local, so that encrypted Shelly BLU devices use Unix time as
+	// their encryption counter without a mains-powered Shelly in range. It
+	// broadcasts only while the system clock is NTP-synchronised. Linux
+	// only: elsewhere Scan returns an error wrapping errors.ErrUnsupported.
+	TimeBeacon bool
 }
 
 const (
@@ -47,9 +57,14 @@ var monoStart = time.Now()
 func mono() int64 { return int64(time.Since(monoStart)) }
 
 // Scan blocks until ctx is done (returns ctx.Err()) or the adapter cannot be
-// enabled. fn is called sequentially from one goroutine and should return
-// quickly.
+// enabled. With Options.TimeBeacon on a platform other than Linux, it returns
+// an error at once. fn is called sequentially from one goroutine and should
+// return quickly.
 func Scan(ctx context.Context, opts Options, fn func(Reading)) error {
+	if opts.TimeBeacon && runtime.GOOS != "linux" {
+		// It needs BlueZ; CoreBluetooth cannot advertise manufacturer data.
+		return fmt.Errorf("blugw: time beacon on %s: %w", runtime.GOOS, errors.ErrUnsupported)
+	}
 	a := bluetooth.DefaultAdapter
 	if err := a.Enable(); err != nil {
 		return err
@@ -94,18 +109,18 @@ func Scan(ctx context.Context, opts Options, fn func(Reading)) error {
 		}
 	}
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		run(ctx, a, cb, &last, opts.Watchdog)
-	}()
+	var wg sync.WaitGroup
+	wg.Go(func() { run(ctx, a, cb, &last, opts.Watchdog) })
+	if opts.TimeBeacon {
+		wg.Go(func() { beacon(ctx) })
+	}
 
 	s := scanner{keys: opts.Keys, allow: opts.Allow, devices: map[string]*device{}, counters: map[bthome.MAC]uint32{}}
 	var dropLogged time.Time
 	for {
 		select {
 		case <-ctx.Done():
-			<-done
+			wg.Wait()
 			return ctx.Err()
 		case ad := <-ch:
 			if r, ok := s.handle(ad); ok {
@@ -353,4 +368,49 @@ func parseShelly(b []byte) (mac bthome.MAC, model uint16) {
 		}
 	}
 	return mac, model
+}
+
+// timeBeacon returns the Shelly time beacon for now in loc, as manufacturer
+// data after the company ID: 0x0D, then little-endian Unix time (uint32), the
+// UTC offset of standard time (int32 seconds), the start and end of DST in
+// the current local year (uint32 Unix times, 0 without DST) and the DST shift
+// (int32 seconds).
+//
+// Shelly does not document the format. The DST fields are those of a POSIX
+// TZ rule: both transitions fall in the current year, so in the southern
+// hemisphere start is after end. A capture from a UK plug in October matches,
+// but cannot tell this from "the current or next DST period"; one taken in
+// November or December could.
+func timeBeacon(now time.Time, loc *time.Location) []byte {
+	now = now.In(loc)
+	_, std := now.Zone()
+	dst := std
+	var start, end int64
+	year := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, loc)
+	next := year.AddDate(1, 0, 0)
+	for t := year; t.Before(next); {
+		_, off := t.Zone()
+		from, to := t.ZoneBounds()
+		if t.IsDST() {
+			dst = off
+			if !from.Before(year) {
+				start = from.Unix()
+			}
+			if !to.IsZero() && to.Before(next) {
+				end = to.Unix()
+			}
+		} else {
+			std = off
+		}
+		if to.IsZero() {
+			break
+		}
+		t = to
+	}
+	b := []byte{0x0D}
+	b = binary.LittleEndian.AppendUint32(b, uint32(now.Unix()))
+	b = binary.LittleEndian.AppendUint32(b, uint32(std))
+	b = binary.LittleEndian.AppendUint32(b, uint32(start))
+	b = binary.LittleEndian.AppendUint32(b, uint32(end))
+	return binary.LittleEndian.AppendUint32(b, uint32(dst-std))
 }
