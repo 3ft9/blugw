@@ -58,7 +58,7 @@ blugw-mqtt reads its configuration only from environment variables. Run
 | `BLUGW_HA` | `false` | Publish Home Assistant MQTT discovery: `true` or `false`. |
 | `BLUGW_HA_PREFIX` | `homeassistant` | Home Assistant discovery prefix. |
 | `BLUGW_TIME_BEACON` | `false` | Broadcast the Shelly time beacon: `true` or `false`. Linux only. See [Time beacon](#time-beacon). |
-| `BLUGW_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. At `debug`, every published message is logged. |
+| `BLUGW_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. At `debug`, every published message is logged, and so is the encryption counter of every encrypted reading. |
 
 MACs can be written as `38:39:8F:87:2B:3E` or `38-39-8f-87-2b-3e`, in any
 case. Spaces around list items and empty items are ignored. The allowed
@@ -318,13 +318,16 @@ To test it:
 1. Turn off the Bluetooth gateway on every Shelly plug in range of the test
    device, so that blugw is its only time source.
 2. On a Raspberry Pi whose clock is synchronised, run blugw-mqtt with
-   `BLUGW_TIME_BEACON=true` and the device's key, and wait for
-   `time beacon on`. A scanner app such as nRF Connect should see the Pi
-   advertising manufacturer data for `0x0BA9` that starts with `0D`.
-3. Power-cycle an encrypted BLU H&T and confirm that its encryption counter
-   (`Reading.Counter`) tracks Unix time (`date +%s`) instead of restarting near
-   zero. A restarted counter shows up in a running blugw-mqtt as warnings about
-   a counter lower than the last one.
+   `BLUGW_TIME_BEACON=true`, `BLUGW_LOG_LEVEL=debug` and the key of an
+   encrypted BLU H&T, and wait for `time beacon on`. A scanner app such as
+   nRF Connect should see the Pi advertising manufacturer data for `0x0BA9`
+   that starts with `0D`.
+3. Wait for an `encrypted reading` log line from the H&T, so that blugw-mqtt
+   holds its counter. Then take the battery out for a few minutes and put it
+   back. The `counter` in the H&T's next `encrypted reading` lines should match
+   Unix time (`date +%s`) to within a few seconds. A counter that restarted
+   near zero is dropped instead, with warnings about a counter lower than the
+   last one.
 
 ## Deployment
 
@@ -443,8 +446,9 @@ if ctx.Err() == nil {
 }
 ```
 
-`Scan` blocks until `ctx` is done or the adapter cannot be enabled. It works as
-follows:
+`Scan` blocks until `ctx` is done or the adapter cannot be enabled. With
+`Options.TimeBeacon` on a platform other than Linux, it returns an error at
+once. It works as follows:
 
 - Shelly devices repeat each advertisement for about a second. `Scan` reports
   each reading once. It drops identical bytes, and packet IDs that are not

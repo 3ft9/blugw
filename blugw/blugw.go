@@ -57,8 +57,9 @@ var monoStart = time.Now()
 func mono() int64 { return int64(time.Since(monoStart)) }
 
 // Scan blocks until ctx is done (returns ctx.Err()) or the adapter cannot be
-// enabled. fn is called sequentially from one goroutine and should return
-// quickly.
+// enabled. With Options.TimeBeacon on a platform other than Linux, it returns
+// an error at once. fn is called sequentially from one goroutine and should
+// return quickly.
 func Scan(ctx context.Context, opts Options, fn func(Reading)) error {
 	if opts.TimeBeacon && runtime.GOOS != "linux" {
 		// It needs BlueZ; CoreBluetooth cannot advertise manufacturer data.
