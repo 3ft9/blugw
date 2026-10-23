@@ -4,9 +4,9 @@ blugw receives BTHome v2 Bluetooth LE advertisements from Shelly BLU devices
 and any other BTHome v2 device, and publishes them to MQTT. It has three
 parts:
 
-- `bthome`: a BTHome v2 decoder, including AES-CCM decryption. It uses only
+- `bthome` (`github.com/3ft9/blugw/bthome`): a BTHome v2 decoder, including AES-CCM decryption. It uses only
   the standard library and works on its own.
-- `blugw`: a scanner that turns advertisements into deduplicated, decoded
+- `blugw` (`github.com/3ft9/blugw/blugw`): a scanner that turns advertisements into deduplicated, decoded
   readings. It uses [tinygo.org/x/bluetooth](https://github.com/tinygo-org/bluetooth).
 - `cmd/blugw-mqtt`: the gateway binary. It publishes readings to an MQTT
   broker, with optional Home Assistant discovery.

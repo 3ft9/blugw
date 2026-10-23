@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/3ft9/blugw"
+	"github.com/3ft9/blugw/blugw"
 	"github.com/3ft9/blugw/bthome"
 )
 

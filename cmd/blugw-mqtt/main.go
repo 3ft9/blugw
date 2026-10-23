@@ -27,7 +27,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/3ft9/blugw"
+	"github.com/3ft9/blugw/blugw"
 	"github.com/3ft9/blugw/bthome"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
