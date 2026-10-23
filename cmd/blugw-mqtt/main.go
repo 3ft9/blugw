@@ -111,7 +111,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	context.AfterFunc(ctx, stop) // a second signal kills a hung shutdown
 	code := 0
-	err = blugw.Scan(ctx, cfg.opts, func(r blugw.Reading) { publish(c, g.qos, g.messages(r)) })
+	err = blugw.Scan(ctx, cfg.opts, func(r blugw.Reading) {
+		if r.Encrypted {
+			slog.Debug("encrypted reading", "mac", r.MAC.String(), "counter", r.Counter)
+		}
+		publish(c, g.qos, g.messages(r))
+	})
 	if ctx.Err() == nil {
 		slog.Error("blugw-mqtt: scanning failed", "err", err)
 		code = 1
