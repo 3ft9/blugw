@@ -56,6 +56,8 @@ publishes their readings to MQTT. It is configured with environment variables:
   BLUGW_HA             publish Home Assistant MQTT discovery: true or false
                        (default: false)
   BLUGW_HA_PREFIX      Home Assistant discovery prefix (default: homeassistant)
+  BLUGW_TIME_BEACON    broadcast the Shelly time beacon (Linux only): true or
+                       false (default: false)
   BLUGW_LOG_LEVEL      debug, info, warn or error (default: info)
 
 Topics, with <mac> as 12 lower-case hex digits:
@@ -270,6 +272,11 @@ func parseConfig(getenv func(string) string) (config, error) {
 	if s := getenv("BLUGW_HA"); s != "" {
 		if c.ha, err = strconv.ParseBool(s); err != nil {
 			return c, fmt.Errorf("BLUGW_HA %q: want true or false", s)
+		}
+	}
+	if s := getenv("BLUGW_TIME_BEACON"); s != "" {
+		if c.opts.TimeBeacon, err = strconv.ParseBool(s); err != nil {
+			return c, fmt.Errorf("BLUGW_TIME_BEACON %q: want true or false", s)
 		}
 	}
 	if s := getenv("BLUGW_MQTT_QOS"); s != "" {
