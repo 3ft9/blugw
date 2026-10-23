@@ -181,6 +181,10 @@ log_level: debug
 		{"key and MAC swapped", base + "keys: {" + key + ": 38:39:8F:8C:77:DA}\n", nil, "", "blugw.yaml: keys: an entry: want"},
 		{"keys not a map", base + "keys: " + key + "\n", nil, "", "line 3: cannot unmarshal !!str into map[string]string"},
 		{"mqtt not a map", "mqtt: s3cret\n", nil, "", "line 1: cannot unmarshal !!str into struct"},
+		{"password as alias", "mqtt: {url: tcp://broker:1883, password: *s3cret}\n", nil, "", "yaml: unknown anchor referenced"},
+		{"key as alias", base + "keys: {38:39:8F:8C:77:DA: *" + key + "}\n", nil, "", "yaml: unknown anchor referenced"},
+		{"tagged password", "mqtt: {url: tcp://broker:1883, password: !!int s3cret}\n", nil, "", "yaml: cannot decode !!str as a !!int"},
+		{"duplicate key", base + "keys:\n  " + key + ": a\n  " + key + ": b\n", nil, "", "line 5: mapping key already defined at line 4"},
 		{"bad variable", full, map[string]string{"BLUGW_WATCHDOG": "5"}, "", `BLUGW_WATCHDOG "5"`},
 	}
 	for _, tc := range tests {
@@ -220,18 +224,27 @@ func TestConfigFileMode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no Unix file modes")
 	}
+	creds := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", creds)
 	tests := []struct {
 		yaml string
 		mode os.FileMode
+		cred bool // in CREDENTIALS_DIRECTORY
 		want bool // exposed
 	}{
-		{"mqtt: {password: s3cret}", 0o600, false},
-		{"mqtt: {password: s3cret}", 0o640, true},
-		{"keys: {38:39:8F:8C:77:DA: " + testKey + "}", 0o604, true},
-		{"mqtt: {user: blugw}", 0o644, false},
+		{"mqtt: {password: s3cret}", 0o600, false, false},
+		{"mqtt: {password: s3cret}", 0o640, false, true},
+		{"keys: {38:39:8F:8C:77:DA: " + testKey + "}", 0o604, false, true},
+		{"mqtt: {url: 'mqtt://bob:s3cret@broker:1883'}", 0o644, false, true},
+		{"mqtt: {url: 'mqtt://bob@broker:1883', user: blugw}", 0o644, false, false},
+		{"mqtt: {password: s3cret}", 0o440, true, false}, // systemd's ACL shows as group read
 	}
 	for _, tc := range tests {
-		path := filepath.Join(t.TempDir(), "blugw.yaml")
+		dir := t.TempDir()
+		if tc.cred {
+			dir = creds
+		}
+		path := filepath.Join(dir, "blugw.yaml")
 		if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
 			t.Fatal(err)
 		}

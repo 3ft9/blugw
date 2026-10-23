@@ -20,6 +20,8 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -220,22 +222,25 @@ func loadFile(path string) (file, error) {
 	d := yaml.NewDecoder(r)
 	d.KnownFields(true)
 	if err := d.Decode(&f); err != nil && err != io.EOF {
-		// A type error quotes the start of the value, which may be a secret.
-		var te *yaml.TypeError
-		if errors.As(err, &te) {
-			for i, e := range te.Errors {
-				if a, b := strings.Index(e, " `"), strings.LastIndex(e, "` "); a >= 0 && b > a {
-					te.Errors[i] = e[:a] + e[b+1:]
-				}
-			}
-		}
-		return f, fmt.Errorf("%s: %w", path, err)
+		return f, fmt.Errorf("%s: %s", path, yamlQuoted.ReplaceAllString(err.Error(), "$1"))
 	}
-	if fi, err := r.Stat(); err == nil && runtime.GOOS != "windows" {
-		f.exposed = fi.Mode().Perm()&0o077 != 0 && (f.MQTT.Password != "" || len(f.Keys) > 0)
+	// systemd's private copy of a credential is readable by the service user
+	// through an ACL, which shows in the group bits.
+	creds := os.Getenv("CREDENTIALS_DIRECTORY")
+	if fi, err := r.Stat(); err == nil && runtime.GOOS != "windows" && (creds == "" || filepath.Dir(path) != filepath.Clean(creds)) {
+		secret := f.MQTT.Password != "" || len(f.Keys) > 0
+		if u, err := url.Parse(f.MQTT.URL); err == nil {
+			pw, _ := u.User.Password()
+			secret = secret || pw != ""
+		}
+		f.exposed = fi.Mode().Perm()&0o077 != 0 && secret
 	}
 	return f, nil
 }
+
+// yamlQuoted matches the parts of go-yaml errors that quote a value, which may
+// be a secret: a `value`, or the name of an anchor or mapping key.
+var yamlQuoted = regexp.MustCompile("(anchor|key) ['\"].*['\"]| ?`.*`")
 
 // parseConfig reads the configuration from getenv and f. A variable that is
 // not empty overrides the file's value for the same setting.

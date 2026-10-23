@@ -102,13 +102,16 @@ log_level: info                # BLUGW_LOG_LEVEL
   the environment. A list or map variable replaces the file's whole list or
   map.
 - Values are read as written, so MACs and keys need no quotes, even when they
-  are all digits, and names may contain `;`, `=` and `,`. Quote a name that
-  YAML would misread, such as one containing ` #`.
+  are all digits, and names may contain `;`, `=` and `,`. Quote a name or
+  password that YAML would misread: one that starts with punctuation such as
+  `*`, `&`, `!`, `'` or `"`, or contains ` #` or `: `. Inside single quotes
+  everything is as written, except that `''` stands for one `'`.
 - `homeassistant.enabled` takes `true` or `false`, not `yes` or `no`.
 - Unknown keys are an error, so a misspelt key does not silently leave its
   default in place.
-- If the file holds a password or keys and is readable by its group or
-  others, blugw-mqtt logs a warning. Give it mode 600.
+- If the file holds a password (in `mqtt.password` or `mqtt.url`) or keys and
+  is readable by its group or others, blugw-mqtt logs a warning. Give it mode
+  600.
 
 ## MQTT topics and payloads
 
