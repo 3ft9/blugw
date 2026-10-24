@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # macOS, because the darwin build needs cgo. The Linux builds cross-compile.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Current Go, not go.mod's minimum, so that releases ship the latest
+      # standard library security fixes.
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false # release binaries are not built from caches other runs wrote
+      - name: Build and package
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/linux_amd64/ ./cmd/blugw-mqtt
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o bin/linux_arm64/ ./cmd/blugw-mqtt
+          GOOS=linux GOARCH=arm GOARM=6 CGO_ENABLED=0 go build -trimpath -o bin/linux_armv6/ ./cmd/blugw-mqtt
+          GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -trimpath -o bin/linux_armv7/ ./cmd/blugw-mqtt
+          # Without a deployment target, cgo builds for the runner's macOS
+          # version and newer. 13.0 is the oldest that Go 1.27 supports: raise
+          # it when stable Go drops macOS 13.
+          MACOSX_DEPLOYMENT_TARGET=13.0 GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -trimpath -o bin/darwin_arm64/ ./cmd/blugw-mqtt
+          mkdir dist
+          for d in bin/*; do
+            # Owned by root, so that sudo tar -x does not give the binary to the
+            # runner's user ID. Without xattrs, which GNU tar warns about, or the
+            # ._* AppleDouble files bsdtar adds for them.
+            tar --uid 0 --gid 0 --numeric-owner --no-xattrs --no-mac-metadata -czf "dist/blugw-mqtt_${d#bin/}.tar.gz" LICENSE README.md -C "$d" blugw-mqtt
+          done
+          cd dist && shasum -a 256 *.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes dist/*
+        env:
+          GH_TOKEN: ${{ github.token }}
