@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
+	go.yaml.in/yaml/v3 v3.0.5
 	tinygo.org/x/bluetooth v0.16.0
 )
 
