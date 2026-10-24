@@ -184,7 +184,10 @@ The value types are:
 The state holds the last known value of every key. A new reading only
 overwrites the keys it carries. For example, the device-info packet that
 Shelly devices send every 6 hours holds only `packet_id`, `battery`, the model
-and the firmware, so `temperature` and `humidity` stay in the state.
+and the firmware, so `temperature` and `humidity` stay in the state. This
+holds across restarts: on connecting, blugw-mqtt reads back the retained state
+that it published itself (with its own `gateway`), and keeps those keys until
+new readings replace them.
 
 Event objects (button, dimmer, command) are not part of the state. Neither are
 the device type and firmware objects, which become `model_id` and `firmware`.
@@ -248,9 +251,11 @@ Each state key becomes an entity:
 A BLU H&T shows Temperature, Humidity and Battery, with Rssi and Packet Id
 under diagnostics. Its Button entity appears after the first press: entities
 are added as their keys are first seen, and the config is republished when the
-set of keys or the device info changes. The first event for each event key after
-startup is published about 2 seconds late, so that Home Assistant has time to
-subscribe to a new event entity.
+set of keys or the device info changes. A restart does not drop entities: on
+connecting, blugw-mqtt reads back its retained configs and keeps their
+entities, even those whose keys have not been seen since. The first event for
+each event key after startup is published about 2 seconds late, so that Home
+Assistant has time to subscribe to a new event entity.
 
 Every entity's availability follows the gateway status topic. When the gateway
 stops, or its connection to the broker drops, its devices show as unavailable.
@@ -483,10 +488,19 @@ follows:
 - **Repeated bytes**: a device without a packet ID that sends identical bytes
   again is reported only when the bytes change.
 - **BTHome v1**: not supported.
-- **State is in memory**: after a restart, the state and the Home Assistant
-  config hold only keys seen since. Entities whose keys have not been seen yet,
-  such as an H&T button until its next press, may show as unavailable after
-  Home Assistant restarts.
+- **State is kept on the broker**: blugw-mqtt stores nothing on disk. After a
+  restart it restores the state and the Home Assistant config from the
+  broker's retained messages, which needs permission to subscribe to
+  `blugw/device/+` and `homeassistant/device/+/config`. If the broker has lost
+  them too, for example Mosquitto without `persistence true` restarted at the
+  same time, they hold only keys seen since, and entities whose keys have not
+  been seen yet, such as an H&T button until its next press, may show as
+  unavailable after Home Assistant restarts.
+- **Keys are never dropped**: not even by a restart. To get rid of a stale key
+  and its entity, such as `temperature_2` from a one-off packet, stop
+  blugw-mqtt, publish empty retained messages to `blugw/device/<mac>` and
+  `homeassistant/device/blugw_<mac>/config`, then start it again. The device
+  starts afresh with its next reading.
 - **Listening only**: blugw does not configure devices or send them commands.
 
 ## Roadmap

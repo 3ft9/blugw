@@ -83,17 +83,21 @@ var eventTypes = map[byte][]string{
 // discovery returns the Home Assistant device discovery config for d.
 func (g *gateway) discovery(mac bthome.MAC, d *device) []byte {
 	m := hex.EncodeToString(mac[:])
-	cmps := map[string]any{
-		m + "_rssi": map[string]any{
-			"platform":            "sensor",
-			"unique_id":           "blugw_" + m + "_rssi",
-			"name":                title("rssi"),
-			"device_class":        "signal_strength",
-			"state_class":         "measurement",
-			"unit_of_measurement": "dBm",
-			"entity_category":     "diagnostic",
-			"value_template":      "{{ value_json.rssi }}",
-		},
+	// Restored components stay until replaced, so that entities whose keys
+	// have not been seen since a restart are not dropped.
+	cmps := map[string]any{}
+	for k, c := range d.cmps {
+		cmps[k] = c
+	}
+	cmps[m+"_rssi"] = map[string]any{
+		"platform":            "sensor",
+		"unique_id":           "blugw_" + m + "_rssi",
+		"name":                title("rssi"),
+		"device_class":        "signal_strength",
+		"state_class":         "measurement",
+		"unit_of_measurement": "dBm",
+		"entity_category":     "diagnostic",
+		"value_template":      "{{ value_json.rssi }}",
 	}
 	for k, o := range d.objs {
 		cmps[m+"_"+k] = g.component(m, k, o)
@@ -170,7 +174,7 @@ func (g *gateway) component(m, k string, o bthome.Object) map[string]any {
 }
 
 // ifDefined returns a template rendering expr, or nothing while the state lacks
-// key k, as it does after a gateway restart until k is seen again. Binary
+// key k, as it can after a gateway restart until k is seen again. Binary
 // sensors and sensors with a unit, state class or device class ignore empty
 // output and keep their last state.
 func ifDefined(k, expr string) string {
