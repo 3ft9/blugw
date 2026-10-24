@@ -71,8 +71,9 @@ it under System Settings > Privacy & Security > Bluetooth.
 
 ## Configuration
 
-blugw-mqtt reads its configuration only from environment variables. Run
-`blugw-mqtt -h` to print the list.
+blugw-mqtt reads its configuration from environment variables and, optionally,
+a [configuration file](#configuration-file). Run `blugw-mqtt -h` to print the
+list.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -98,6 +99,51 @@ the `BLUGW_EXCLUDE` list.
 
 For an invalid configuration, blugw-mqtt prints the problem and exits with
 status 2. If it cannot enable the Bluetooth adapter, it exits with status 1.
+
+### Configuration file
+
+`blugw-mqtt -config /etc/blugw-mqtt.yaml` reads the same settings from a YAML
+file. Every key is optional and matches one variable:
+
+```yaml
+mqtt:
+  url: tcp://broker.lan:1883   # BLUGW_MQTT_URL, required here or in the environment
+  user: blugw                  # BLUGW_MQTT_USER
+  password: secret             # BLUGW_MQTT_PASSWORD
+  qos: 1                       # BLUGW_MQTT_QOS
+name: pi                       # BLUGW_NAME
+prefix: blugw                  # BLUGW_PREFIX
+include:                       # BLUGW_INCLUDE
+  - 38:39:8F:87:2B:3E
+  - 7C:C6:B6:09:89:8F
+exclude: []                    # BLUGW_EXCLUDE
+names:                         # BLUGW_NAMES
+  38:39:8F:87:2B:3E: Office
+  7C:C6:B6:09:89:8F: Garden; by the shed
+keys:                          # BLUGW_KEYS
+  38:39:8F:87:2B:3E: 00112233445566778899aabbccddeeff
+watchdog: 5m                   # BLUGW_WATCHDOG
+homeassistant:
+  enabled: true                # BLUGW_HA
+  prefix: homeassistant        # BLUGW_HA_PREFIX
+log_level: info                # BLUGW_LOG_LEVEL
+```
+
+- An environment variable that is set and not empty overrides the file's
+  value for the same setting, so secrets such as the MQTT password can stay in
+  the environment. A list or map variable replaces the file's whole list or
+  map.
+- Values are read as written, so MACs and keys need no quotes, even when they
+  are all digits, and names may contain `;`, `=` and `,`. Quote a name or
+  password that YAML would misread: one that starts with punctuation such as
+  `*`, `&`, `!`, `'` or `"`, or contains ` #` or `: `. Inside single quotes
+  everything is as written, except that `''` stands for one `'`.
+- `homeassistant.enabled` takes `true` or `false`, not `yes` or `no`.
+- Unknown keys are an error, so a misspelt key does not silently leave its
+  default in place.
+- If the file holds a password (in `mqtt.password` or `mqtt.url`) or keys and
+  is readable by its group or others, blugw-mqtt logs a warning. Give it mode
+  600.
 
 ## MQTT topics and payloads
 
@@ -170,7 +216,10 @@ The value types are:
 The state holds the last known value of every key. A new reading only
 overwrites the keys it carries. For example, the device-info packet that
 Shelly devices send every 6 hours holds only `packet_id`, `battery`, the model
-and the firmware, so `temperature` and `humidity` stay in the state.
+and the firmware, so `temperature` and `humidity` stay in the state. This
+holds across restarts: on connecting, blugw-mqtt reads back the retained state
+that it published itself (with its own `gateway`), and keeps those keys until
+new readings replace them.
 
 Event objects (button, dimmer, command) are not part of the state. Neither are
 the device type and firmware objects, which become `model_id` and `firmware`.
@@ -234,9 +283,11 @@ Each state key becomes an entity:
 A BLU H&T shows Temperature, Humidity and Battery, with Rssi and Packet Id
 under diagnostics. Its Button entity appears after the first press: entities
 are added as their keys are first seen, and the config is republished when the
-set of keys or the device info changes. The first event for each event key after
-startup is published about 2 seconds late, so that Home Assistant has time to
-subscribe to a new event entity.
+set of keys or the device info changes. A restart does not drop entities: on
+connecting, blugw-mqtt reads back its retained configs and keeps their
+entities, even those whose keys have not been seen since. The first event for
+each event key after startup is published about 2 seconds late, so that Home
+Assistant has time to subscribe to a new event entity.
 
 Every entity's availability follows the gateway status topic. When the gateway
 stops, or its connection to the broker drops, its devices show as unavailable.
@@ -290,8 +341,8 @@ itself: pair with it in Shelly's BLE Debug app (this needs the PIN that was
 set when encryption was enabled) and read the 16-byte "Encryption key"
 characteristic. A Shelly gateway that already has the key will not reveal it.
 If that is more trouble than it is worth, the Shelly app's Decrypt option turns
-encryption off. The keys are secrets, so keep the environment file readable
-only by root (see [Deployment](#deployment)).
+encryption off. The keys are secrets, so keep the environment or configuration
+file readable only by root (see [Deployment](#deployment)).
 
 blugw handles encrypted packets as follows:
 
@@ -357,6 +408,18 @@ systemd reads `EnvironmentFile` before it drops privileges, so the service can
 use the file without being able to read it. Single variables can also be set
 with `Environment=` lines.
 
+To use a [configuration file](#configuration-file) instead, put it in
+`/etc/blugw-mqtt.yaml`, also owned by root with mode 600, and replace the
+`ExecStart` and `EnvironmentFile` lines with:
+
+```ini
+ExecStart=/usr/local/bin/blugw-mqtt -config ${CREDENTIALS_DIRECTORY}/blugw-mqtt.yaml
+LoadCredential=blugw-mqtt.yaml:/etc/blugw-mqtt.yaml
+```
+
+The service cannot read the file itself, so `LoadCredential` (systemd 247 or
+later) gives it a private copy that only the service can read.
+
 ### Docker
 
 Use a Linux release binary, or one built with `CGO_ENABLED=0`. It needs only
@@ -374,7 +437,8 @@ Set `BLUGW_NAME`, because a container's host name is its container ID.
 ### macOS
 
 To run blugw-mqtt in the background, use a LaunchAgent in
-`~/Library/LaunchAgents`, with the configuration in its `EnvironmentVariables`.
+`~/Library/LaunchAgents`, with the configuration in its `EnvironmentVariables`
+or in a file passed with `-config` in its `ProgramArguments`.
 It runs only while that user is logged in. LaunchDaemons cannot use Bluetooth.
 
 ## Using the packages
@@ -456,10 +520,19 @@ follows:
 - **Repeated bytes**: a device without a packet ID that sends identical bytes
   again is reported only when the bytes change.
 - **BTHome v1**: not supported.
-- **State is in memory**: after a restart, the state and the Home Assistant
-  config hold only keys seen since. Entities whose keys have not been seen yet,
-  such as an H&T button until its next press, may show as unavailable after
-  Home Assistant restarts.
+- **State is kept on the broker**: blugw-mqtt stores nothing on disk. After a
+  restart it restores the state and the Home Assistant config from the
+  broker's retained messages, which needs permission to subscribe to
+  `blugw/device/+` and `homeassistant/device/+/config`. If the broker has lost
+  them too, for example Mosquitto without `persistence true` restarted at the
+  same time, they hold only keys seen since, and entities whose keys have not
+  been seen yet, such as an H&T button until its next press, may show as
+  unavailable after Home Assistant restarts.
+- **Keys are never dropped**: not even by a restart. To get rid of a stale key
+  and its entity, such as `temperature_2` from a one-off packet, stop
+  blugw-mqtt, publish empty retained messages to `blugw/device/<mac>` and
+  `homeassistant/device/blugw_<mac>/config`, then start it again. The device
+  starts afresh with its next reading.
 - **Listening only**: blugw does not configure devices or send them commands.
 
 ## Roadmap

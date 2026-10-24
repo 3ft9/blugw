@@ -4,6 +4,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -20,7 +22,7 @@ func TestParseConfig(t *testing.T) {
 	}
 	const (
 		url = "tcp://broker:1883"
-		key = "90bffd73cb6b26ef58a7a8eba9232036"
+		key = testKey
 	)
 	tests := []struct {
 		name string
@@ -91,12 +93,12 @@ func TestParseConfig(t *testing.T) {
 					return url
 				}
 				return ""
-			})
+			}, file{})
 			if tc.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.err) {
 					t.Fatalf("err = %v, want %q", err, tc.err)
 				}
-				if e := strings.ToLower(err.Error()); strings.Contains(e, key[4:]) || strings.Contains(e, "s3cret") {
+				if leaks(err) {
 					t.Errorf("error reveals a secret: %v", err)
 				}
 				return
@@ -109,6 +111,164 @@ func TestParseConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConfigFile(t *testing.T) {
+	const (
+		key  = testKey
+		full = `
+mqtt:
+  url: ssl://broker:8883
+  user: blugw
+  password: s3cret
+  qos: 2
+name: attic
+prefix: home/ble
+include: [38:39:8f:8c:77:da, 7C-C6-B6-73-AB-4E]
+exclude:
+  - 7C:C6:B6:73:AB:4E
+names:
+  38:39:8F:8C:77:DA: Office
+keys:
+  38:39:8F:8C:77:DA: ` + key + `
+watchdog: 90s
+homeassistant:
+  enabled: true
+  prefix: ha
+log_level: debug
+`
+		want = "url=ssl://broker:8883 user=blugw name=attic prefix=home/ble keys=[38:39:8F:8C:77:DA=" + key + "] allow=+a-b-c watchdog=1m30s ha=true haPrefix=ha level=DEBUG qos=2 names=[\"38:39:8F:8C:77:DA=Office\"] password=s3cret"
+		base = "mqtt: {url: tcp://broker:1883}\nname: gw\n"
+		def  = "url=tcp://broker:1883 user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1"
+	)
+	// full as environment variables
+	env := map[string]string{
+		"BLUGW_MQTT_URL": "ssl://broker:8883", "BLUGW_MQTT_USER": "blugw", "BLUGW_MQTT_PASSWORD": "s3cret", "BLUGW_MQTT_QOS": "2",
+		"BLUGW_NAME": "attic", "BLUGW_PREFIX": "home/ble", "BLUGW_INCLUDE": "38:39:8f:8c:77:da,7C-C6-B6-73-AB-4E", "BLUGW_EXCLUDE": "7C:C6:B6:73:AB:4E",
+		"BLUGW_NAMES": "38:39:8F:8C:77:DA=Office", "BLUGW_KEYS": "38:39:8F:8C:77:DA=" + key,
+		"BLUGW_WATCHDOG": "90s", "BLUGW_HA": "true", "BLUGW_HA_PREFIX": "ha", "BLUGW_LOG_LEVEL": "debug",
+	}
+	c, err := parseConfig(func(k string) string { return env[k] }, file{})
+	if got := render(c) + " password=" + c.password; err != nil || got != want {
+		t.Fatalf("environment: got %s, %v\nwant %s", got, err, want)
+	}
+
+	tests := []struct {
+		name string
+		yaml string
+		env  map[string]string
+		want string // render, then password=
+		err  string // substring of the error, if one is expected
+	}{
+		{"full", full, nil, want, ""},
+		{"environment overrides", full, map[string]string{"BLUGW_NAME": "gw", "BLUGW_PREFIX": "", "BLUGW_MQTT_PASSWORD": "env", "BLUGW_INCLUDE": "B0:C7:DE:42:1F:D5", "BLUGW_KEYS": "B4:35:22:F5:3D:A4=" + key, "BLUGW_HA": "false"},
+			"url=ssl://broker:8883 user=blugw name=gw prefix=home/ble keys=[B4:35:22:F5:3D:A4=" + key + "] allow=-a-b+c watchdog=1m30s ha=false haPrefix=ha level=DEBUG qos=2 names=[\"38:39:8F:8C:77:DA=Office\"] password=env", ""},
+		{"empty", "# nothing yet\n", map[string]string{"BLUGW_MQTT_URL": "tcp://broker:1883", "BLUGW_NAME": "gw"}, def + " password=", ""},
+		{"names with separators", base + "names:\n  38:39:8F:87:2B:3E: Office; upstairs, left=1\n", nil, def + ` names=["38:39:8F:87:2B:3E=Office; upstairs, left=1"] password=`, ""},
+		{"numbers stay text", base + "include: [11:22:33:44:55:66]\nnames: {11:22:33:44:55:66: 0012}\nkeys:\n  11:22:33:44:55:66: 12345678901234567890123456789012\n  00:11:22:33:44:55: 00000000000000000000000000000001\n  22:33:44:55:66:77: 1e345678901234567890123456789012\n",
+			nil, "url=tcp://broker:1883 user= name=gw prefix=blugw keys=[00:11:22:33:44:55=00000000000000000000000000000001 11:22:33:44:55:66=12345678901234567890123456789012 22:33:44:55:66:77=1e345678901234567890123456789012] allow=-a-b-c watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1 names=[\"11:22:33:44:55:66=0012\"] password=", ""},
+
+		{"yes is not true", base + "homeassistant: {enabled: yes}\n", nil, "", `blugw.yaml: homeassistant.enabled "yes": want true or false`},
+		{"unknown key", "mqtt:\n  url: tcp://broker:1883\n  pasword: s3cret\n", nil, "", "line 3: field pasword not found"},
+		{"unknown top-level key", base + "loglevel: debug\n", nil, "", "line 3: field loglevel not found"},
+		{"no URL", "name: gw\n", nil, "", `blugw.yaml: mqtt.url "": want`},
+		{"URL with password", "mqtt: {url: 'mqtt://bob:s3cret@broker'}\n", nil, "", `blugw.yaml: mqtt.url "mqtt://bob:xxxxx@broker"`},
+		{"bad QoS", "mqtt: {url: tcp://broker:1883, qos: 3}\n", nil, "", `blugw.yaml: mqtt.qos "3"`},
+		{"bad prefix", base + "prefix: a//b\n", nil, "", `blugw.yaml: prefix "a//b"`},
+		{"bad MAC", base + "exclude: [nope]\n", nil, "", `blugw.yaml: exclude: "nope" is not a MAC address`},
+		{"bad name", base + "names: {38:39:8F:87:2B: Office}\n", nil, "", `blugw.yaml: names: "38:39:8F:87:2B": want a MAC and a name`},
+		{"short key", base + "keys: {38:39:8F:8C:77:DA: " + key[2:] + "}\n", nil, "", "blugw.yaml: keys: 38:39:8F:8C:77:DA: want"},
+		{"key and MAC swapped", base + "keys: {" + key + ": 38:39:8F:8C:77:DA}\n", nil, "", "blugw.yaml: keys: an entry: want"},
+		{"keys not a map", base + "keys: " + key + "\n", nil, "", "line 3: cannot unmarshal !!str into map[string]string"},
+		{"mqtt not a map", "mqtt: s3cret\n", nil, "", "line 1: cannot unmarshal !!str into struct"},
+		{"password as alias", "mqtt: {url: tcp://broker:1883, password: *s3cret}\n", nil, "", "yaml: unknown anchor referenced"},
+		{"key as alias", base + "keys: {38:39:8F:8C:77:DA: *" + key + "}\n", nil, "", "yaml: unknown anchor referenced"},
+		{"tagged password", "mqtt: {url: tcp://broker:1883, password: !!int s3cret}\n", nil, "", "yaml: cannot decode !!str as a !!int"},
+		{"duplicate key", base + "keys:\n  " + key + ": a\n  " + key + ": b\n", nil, "", "line 5: mapping key already defined at line 4"},
+		{"bad variable", full, map[string]string{"BLUGW_WATCHDOG": "5"}, "", `BLUGW_WATCHDOG "5"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "blugw.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f, err := loadFile(path)
+			var c config
+			if err == nil {
+				c, err = parseConfig(func(k string) string { return tc.env[k] }, f)
+			}
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("err = %v, want %q", err, tc.err)
+				}
+				if leaks(err) {
+					t.Errorf("error reveals a secret: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := render(c) + " password=" + c.password; got != tc.want {
+				t.Errorf("got  %s\nwant %s", got, tc.want)
+			}
+			if f.exposed {
+				t.Error("exposed with mode 600")
+			}
+		})
+	}
+}
+
+func TestConfigFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no Unix file modes")
+	}
+	creds := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", creds)
+	tests := []struct {
+		yaml string
+		mode os.FileMode
+		cred bool // in CREDENTIALS_DIRECTORY
+		want bool // exposed
+	}{
+		{"mqtt: {password: s3cret}", 0o600, false, false},
+		{"mqtt: {password: s3cret}", 0o640, false, true},
+		{"keys: {38:39:8F:8C:77:DA: " + testKey + "}", 0o604, false, true},
+		{"mqtt: {url: 'mqtt://bob:s3cret@broker:1883'}", 0o644, false, true},
+		{"mqtt: {url: 'mqtt://bob@broker:1883', user: blugw}", 0o644, false, false},
+		{"mqtt: {password: s3cret}", 0o440, true, false}, // systemd's ACL shows as group read
+	}
+	for _, tc := range tests {
+		dir := t.TempDir()
+		if tc.cred {
+			dir = creds
+		}
+		path := filepath.Join(dir, "blugw.yaml")
+		if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		if f, err := loadFile(path); err != nil || f.exposed != tc.want {
+			t.Errorf("%s at %v: exposed = %v, %v; want %v", tc.yaml, tc.mode, f.exposed, err, tc.want)
+		}
+	}
+}
+
+const testKey = "90bffd73cb6b26ef58a7a8eba9232036"
+
+// leaks reports whether err reveals the test password s3cret or any six
+// digits in a row of testKey.
+func leaks(err error) bool {
+	e := strings.ToLower(err.Error())
+	for i := range len(testKey) - 5 {
+		if strings.Contains(e, testKey[i:i+6]) {
+			return true
+		}
+	}
+	return strings.Contains(e, "s3cret")
 }
 
 // render summarises c. allow shows, for MACs a, b and c, + if allowed and -
@@ -332,5 +492,59 @@ func TestNames(t *testing.T) {
 	}
 	if state := string(msgs[1].payload); !strings.Contains(state, `"local_name":"SBHT-003C","mac":"38:39:8F:8C:77:DA","model_id":3,"name":"Office"`) {
 		t.Errorf("name not in state: %s", state)
+	}
+}
+
+func TestRestore(t *testing.T) {
+	const (
+		state = "blugw/device/38398f8c77da"
+		disc  = "homeassistant/device/blugw_38398f8c77da/config"
+		// Published before a restart, with an older battery, rssi and time,
+		// and a name from a BLUGW_NAMES entry removed since.
+		old = `{"battery":85,"encrypted":false,"gateway":"test","humidity":55,"local_name":"SBHT-003C","mac":"38:39:8F:8C:77:DA","model_id":3,"name":"Office","packet_id":9,"rssi":-80,"temperature":19.5,"time":"2026-10-23T11:00:00.000Z"}`
+		// After a device-info packet, without and with the old state.
+		info   = `{"battery":100,"encrypted":false,"firmware":"1.0.23.0","gateway":"test","mac":"38:39:8F:8C:77:DA","model_id":3,"packet_id":222,"rssi":-68,"time":"2026-10-23T17:57:14.348Z"}`
+		merged = `{"battery":100,"encrypted":false,"firmware":"1.0.23.0","gateway":"test","humidity":55,"local_name":"SBHT-003C","mac":"38:39:8F:8C:77:DA","model_id":3,"packet_id":222,"rssi":-68,"temperature":19.5,"time":"2026-10-23T17:57:14.348Z"}`
+		button = `"38398f8c77da_button":{"device_class":"button","event_types":["press"],"name":"Button","platform":"event","state_topic":"blugw/device/38398f8c77da/event/button","unique_id":"blugw_38398f8c77da_button"}`
+	)
+	cfg := strings.Replace(htConfig, `"components":{`, `"components":{`+button+",", 1)
+	tests := []struct {
+		name           string
+		topic, payload string
+		deny           bool   // BLUGW_EXCLUDE has the device
+		state          string // published after a device-info packet
+		button         bool   // whether the config keeps the restored button
+	}{
+		{"state", state, old, false, merged, false},
+		{"config", disc, cfg, false, info, true},
+		{"foreign gateway", state, strings.Replace(old, `"gateway":"test"`, `"gateway":"attic"`, 1), false, info, false},
+		{"other origin", disc, strings.Replace(cfg, `"name":"blugw-mqtt"`, `"name":"zigbee2mqtt"`, 1), false, info, false},
+		{"other identifiers", disc, strings.Replace(cfg, `"identifiers":["blugw_38398f8c77da"]`, `"identifiers":["0x38398f8c77da"]`, 1), false, info, false},
+		{"state not allowed", state, old, true, info, false},
+		{"config not allowed", disc, cfg, true, info, false},
+		{"malformed state", state, old[:40], false, info, false},
+		{"state not an object", state, `["gateway","test"]`, false, info, false},
+		{"malformed config", disc, cfg[:40], false, info, false},
+		{"component not an object", disc, strings.Replace(cfg, `"components":{`, `"components":{"x":1,`, 1), false, info, false},
+		{"config on state topic", state, cfg, false, info, false},
+		{"state on config topic", disc, old, false, info, false},
+		{"upper-case topic", "blugw/device/38398F8C77DA", old, false, info, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newGateway(config{name: "test", prefix: "blugw", ha: true, haPrefix: "homeassistant", qos: 1})
+			g.opts.Allow = func(bthome.MAC) bool { return !tc.deny }
+			g.restore(tc.topic, []byte(tc.payload))
+			msgs := g.messages(reading(t, "4400de0164f00300f100170001", 3, ""))
+			if len(msgs) != 2 {
+				t.Fatalf("got %q, want config and state", show(msgs))
+			}
+			if got := string(msgs[1].payload); got != tc.state {
+				t.Errorf("state\ngot  %s\nwant %s", got, tc.state)
+			}
+			if got := strings.Contains(string(msgs[0].payload), button); got != tc.button {
+				t.Errorf("config has the restored button: %v, want %v", got, tc.button)
+			}
+		})
 	}
 }
