@@ -62,13 +62,15 @@ publishes their readings to MQTT. It is configured with environment variables:
   BLUGW_HA             publish Home Assistant MQTT discovery: true or false
                        (default: false)
   BLUGW_HA_PREFIX      Home Assistant discovery prefix (default: homeassistant)
+  BLUGW_TIME_BEACON    broadcast the Shelly time beacon (Linux only): true or
+                       false (default: false)
   BLUGW_LOG_LEVEL      debug, info, warn or error (default: info)
 
 -config reads the same settings from a YAML file, with the keys mqtt.url,
 mqtt.user, mqtt.password, mqtt.qos, name, prefix, include, exclude, names,
-keys, watchdog, homeassistant.enabled, homeassistant.prefix and log_level.
-include and exclude are lists of MACs; names and keys map MACs to values. A
-variable that is set and not empty overrides the file's value.
+keys, watchdog, homeassistant.enabled, homeassistant.prefix, time_beacon and
+log_level. include and exclude are lists of MACs; names and keys map MACs to
+values. A variable that is set and not empty overrides the file's value.
 
 Topics, with <mac> as 12 lower-case hex digits:
 
@@ -232,6 +234,7 @@ type file struct {
 	Names, Keys      map[string]string
 	Watchdog         string
 	HomeAssistant    struct{ Enabled, Prefix string }
+	TimeBeacon       string `yaml:"time_beacon"`
 	LogLevel         string `yaml:"log_level"`
 
 	path    string // where the file was read from; empty if there is none
@@ -409,6 +412,11 @@ func parseConfig(getenv func(string) string, f file) (config, error) {
 	if s := cmp.Or(getenv("BLUGW_HA"), f.HomeAssistant.Enabled); s != "" {
 		if c.ha, err = strconv.ParseBool(s); err != nil {
 			return c, fmt.Errorf("%s %q: want true or false", label("BLUGW_HA", "homeassistant.enabled"), s)
+		}
+	}
+	if s := cmp.Or(getenv("BLUGW_TIME_BEACON"), f.TimeBeacon); s != "" {
+		if c.opts.TimeBeacon, err = strconv.ParseBool(s); err != nil {
+			return c, fmt.Errorf("%s %q: want true or false", label("BLUGW_TIME_BEACON", "time_beacon"), s)
 		}
 	}
 	if s := cmp.Or(getenv("BLUGW_MQTT_QOS"), f.MQTT.QoS); s != "" {

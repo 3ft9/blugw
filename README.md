@@ -90,6 +90,7 @@ list.
 | `BLUGW_WATCHDOG` | `5m` | Restart scanning when no BTHome advertisement has arrived for this long, as a Go duration. `0` disables it. |
 | `BLUGW_HA` | `false` | Publish Home Assistant MQTT discovery: `true` or `false`. |
 | `BLUGW_HA_PREFIX` | `homeassistant` | Home Assistant discovery prefix. |
+| `BLUGW_TIME_BEACON` | `false` | Broadcast the Shelly time beacon: `true` or `false`. Linux only. See [Time beacon](#time-beacon). |
 | `BLUGW_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. At `debug`, every published message is logged. |
 
 MACs can be written as `38:39:8F:87:2B:3E` or `38-39-8f-87-2b-3e`, in any
@@ -126,6 +127,7 @@ watchdog: 5m                   # BLUGW_WATCHDOG
 homeassistant:
   enabled: true                # BLUGW_HA
   prefix: homeassistant        # BLUGW_HA_PREFIX
+time_beacon: false             # BLUGW_TIME_BEACON
 log_level: info                # BLUGW_LOG_LEVEL
 ```
 
@@ -138,7 +140,8 @@ log_level: info                # BLUGW_LOG_LEVEL
   password that YAML would misread: one that starts with punctuation such as
   `*`, `&`, `!`, `'` or `"`, or contains ` #` or `: `. Inside single quotes
   everything is as written, except that `''` stands for one `'`.
-- `homeassistant.enabled` takes `true` or `false`, not `yes` or `no`.
+- `homeassistant.enabled` and `time_beacon` take `true` or `false`, not `yes`
+  or `no`.
 - Unknown keys are an error, so a misspelt key does not silently leave its
   default in place.
 - If the file holds a password (in `mqtt.password` or `mqtt.url`) or keys and
@@ -364,6 +367,50 @@ blugw handles encrypted packets as follows:
 > encryption counter, which survives battery changes. Without a beacon, the
 > counter may reset, for example after a battery swap. blugw then drops that
 > device's readings until it is restarted. The battery-swap case is untested.
+> On Linux, blugw can be the beacon: see [Time beacon](#time-beacon).
+
+## Time beacon
+
+On Linux, set `BLUGW_TIME_BEACON=true` (`time_beacon: true` in the
+[configuration file](#configuration-file), or `Options.TimeBeacon` in the
+`blugw` package) to broadcast the Shelly time beacon, so that encrypted Shelly
+BLU devices keep Unix-time counters without a mains-powered Shelly in range.
+
+> **Untested on hardware.** blugw's beacon data matches a captured Shelly Plug
+> beacon byte for byte, but no Shelly BLU device has yet been seen to take its
+> time from blugw. See the test plan below.
+
+- **NTP is required.** blugw broadcasts only while the system clock is
+  synchronised, by the same test as `timedatectl`'s
+  `System clock synchronized: yes`. A device takes the beacon's time as its
+  encryption counter, so a clock that is ahead would push counters into the
+  future, and receivers, blugw included, would drop the device's packets until
+  real time caught up. blugw stops broadcasting when the clock loses sync, and
+  logs `time beacon on` and `time beacon off` when that changes.
+- The beacon is manufacturer data for company ID `0x0BA9`, as the plugs send
+  it: `0x0D`, then the Unix time, the standard UTC offset, the start and end of
+  DST in the current year, and the DST shift. blugw refreshes the time every 4
+  seconds, as the plugs do.
+- The time zone fields come from the local time zone (`TZ` or
+  `/etc/localtime`), so set `TZ` for a container. Shelly does not document
+  them; in the southern hemisphere, blugw sends a DST start that is after the
+  DST end.
+- It is not available on macOS, where CoreBluetooth cannot advertise
+  manufacturer data. There, blugw-mqtt exits with an error, and `Scan` returns
+  one that wraps `errors.ErrUnsupported`.
+
+To test it:
+
+1. Turn off the Bluetooth gateway on every Shelly plug in range of the test
+   device, so that blugw is its only time source.
+2. On a Raspberry Pi whose clock is synchronised, run blugw-mqtt with
+   `BLUGW_TIME_BEACON=true` and the device's key, and wait for
+   `time beacon on`. A scanner app such as nRF Connect should see the Pi
+   advertising manufacturer data for `0x0BA9` that starts with `0D`.
+3. Power-cycle an encrypted BLU H&T and confirm that its encryption counter
+   (`Reading.Counter`) tracks Unix time (`date +%s`) instead of restarting near
+   zero. A restarted counter shows up in a running blugw-mqtt as warnings about
+   a counter lower than the last one.
 
 ## Deployment
 
@@ -599,14 +646,9 @@ follows:
   blugw-mqtt, publish empty retained messages to `blugw/device/<mac>` and
   `homeassistant/device/blugw_<mac>/config`, then start it again. The device
   starts afresh with its next reading.
-- **Listening only**: blugw does not configure devices or send them commands.
-
-## Roadmap
-
-v2 will let blugw act as a Shelly time-beacon source on Linux, so that
-encrypted devices keep Unix-time counters without a mains Shelly nearby. This
-is not possible on macOS, where CoreBluetooth cannot advertise manufacturer
-data.
+- **No device control**: blugw does not configure devices or send them
+  commands. The only thing it transmits is the optional
+  [time beacon](#time-beacon).
 
 ## License
 
