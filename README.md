@@ -566,11 +566,15 @@ follows:
 
 - **Windows**: blugw builds, but tinygo bluetooth v0.16.0 does not deliver
   service data on Windows, so no readings arrive.
-- **Tested on**: macOS on Apple silicon, and Linux on amd64 (NixOS 25.11,
-  kernel 6.12, BlueZ 5.84) with Intel 7265 and Intel AX211 adapters, under
-  Nomad's `raw_exec` driver as root. Devices: Shelly BLU H&T, Motion and
-  Door/Window. Not yet run: the ARM builds on a Raspberry Pi, and
-  blugw-mqtt as a non-root user.
+- **Tested on**:
+  - macOS on Apple silicon.
+  - Linux on amd64 (NixOS 25.11, kernel 6.12, BlueZ 5.84) with Intel 7265 and
+    Intel AX211 adapters, under Nomad's `raw_exec` driver as root.
+  - A Raspberry Pi 4 Model B with its built-in adapter (Debian 12 bookworm,
+    arm64, BlueZ 5.66), as a normal user.
+
+  Devices: Shelly BLU H&T, Motion and Door/Window. Not yet run: the
+  `linux_armv7` and `linux_armv6` builds.
 - **MediaTek MT7921 adapters**: on one test machine, the MT7921's Bluetooth
   (USB `0e8d:7961`) failed setup with `hci0: Failed to send wmt func ctrl
   (-22)`, so BlueZ saw no controller, and reloading `btusb` did not help. This
