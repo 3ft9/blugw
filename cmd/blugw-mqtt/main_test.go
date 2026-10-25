@@ -73,6 +73,8 @@ func TestParseConfig(t *testing.T) {
 		{"bad watchdog", map[string]string{"BLUGW_WATCHDOG": "5"}, "", "BLUGW_WATCHDOG"},
 		{"negative watchdog", map[string]string{"BLUGW_WATCHDOG": "-1m"}, "", "BLUGW_WATCHDOG"},
 		{"bad HA", map[string]string{"BLUGW_HA": "yes"}, "", "BLUGW_HA"},
+		{"time beacon", map[string]string{"BLUGW_NAME": "gw", "BLUGW_TIME_BEACON": "true"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1 timeBeacon=true", ""},
+		{"bad time beacon", map[string]string{"BLUGW_TIME_BEACON": "on"}, "", "BLUGW_TIME_BEACON"},
 		{"QoS 0", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_QOS": "0"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=0", ""},
 		{"QoS 2", map[string]string{"BLUGW_NAME": "gw", "BLUGW_MQTT_QOS": "2"}, "url=" + url + " user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=2", ""},
 		{"bad QoS", map[string]string{"BLUGW_MQTT_QOS": "3"}, "", "BLUGW_MQTT_QOS"},
@@ -135,9 +137,10 @@ watchdog: 90s
 homeassistant:
   enabled: true
   prefix: ha
+time_beacon: true
 log_level: debug
 `
-		want = "url=ssl://broker:8883 user=blugw name=attic prefix=home/ble keys=[38:39:8F:8C:77:DA=" + key + "] allow=+a-b-c watchdog=1m30s ha=true haPrefix=ha level=DEBUG qos=2 names=[\"38:39:8F:8C:77:DA=Office\"] password=s3cret"
+		want = "url=ssl://broker:8883 user=blugw name=attic prefix=home/ble keys=[38:39:8F:8C:77:DA=" + key + "] allow=+a-b-c watchdog=1m30s ha=true haPrefix=ha level=DEBUG qos=2 names=[\"38:39:8F:8C:77:DA=Office\"] timeBeacon=true password=s3cret"
 		base = "mqtt: {url: tcp://broker:1883}\nname: gw\n"
 		def  = "url=tcp://broker:1883 user= name=gw prefix=blugw keys=[] allow=all watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1"
 	)
@@ -146,7 +149,7 @@ log_level: debug
 		"BLUGW_MQTT_URL": "ssl://broker:8883", "BLUGW_MQTT_USER": "blugw", "BLUGW_MQTT_PASSWORD": "s3cret", "BLUGW_MQTT_QOS": "2",
 		"BLUGW_NAME": "attic", "BLUGW_PREFIX": "home/ble", "BLUGW_INCLUDE": "38:39:8f:8c:77:da,7C-C6-B6-73-AB-4E", "BLUGW_EXCLUDE": "7C:C6:B6:73:AB:4E",
 		"BLUGW_NAMES": "38:39:8F:8C:77:DA=Office", "BLUGW_KEYS": "38:39:8F:8C:77:DA=" + key,
-		"BLUGW_WATCHDOG": "90s", "BLUGW_HA": "true", "BLUGW_HA_PREFIX": "ha", "BLUGW_LOG_LEVEL": "debug",
+		"BLUGW_WATCHDOG": "90s", "BLUGW_HA": "true", "BLUGW_HA_PREFIX": "ha", "BLUGW_TIME_BEACON": "true", "BLUGW_LOG_LEVEL": "debug",
 	}
 	c, err := parseConfig(func(k string) string { return env[k] }, file{})
 	if got := render(c) + " password=" + c.password; err != nil || got != want {
@@ -161,7 +164,7 @@ log_level: debug
 		err  string // substring of the error, if one is expected
 	}{
 		{"full", full, nil, want, ""},
-		{"environment overrides", full, map[string]string{"BLUGW_NAME": "gw", "BLUGW_PREFIX": "", "BLUGW_MQTT_PASSWORD": "env", "BLUGW_INCLUDE": "B0:C7:DE:42:1F:D5", "BLUGW_KEYS": "B4:35:22:F5:3D:A4=" + key, "BLUGW_HA": "false"},
+		{"environment overrides", full, map[string]string{"BLUGW_NAME": "gw", "BLUGW_PREFIX": "", "BLUGW_MQTT_PASSWORD": "env", "BLUGW_INCLUDE": "B0:C7:DE:42:1F:D5", "BLUGW_KEYS": "B4:35:22:F5:3D:A4=" + key, "BLUGW_HA": "false", "BLUGW_TIME_BEACON": "false"},
 			"url=ssl://broker:8883 user=blugw name=gw prefix=home/ble keys=[B4:35:22:F5:3D:A4=" + key + "] allow=-a-b+c watchdog=1m30s ha=false haPrefix=ha level=DEBUG qos=2 names=[\"38:39:8F:8C:77:DA=Office\"] password=env", ""},
 		{"empty", "# nothing yet\n", map[string]string{"BLUGW_MQTT_URL": "tcp://broker:1883", "BLUGW_NAME": "gw"}, def + " password=", ""},
 		{"names with separators", base + "names:\n  38:39:8F:87:2B:3E: Office; upstairs, left=1\n", nil, def + ` names=["38:39:8F:87:2B:3E=Office; upstairs, left=1"] password=`, ""},
@@ -169,6 +172,7 @@ log_level: debug
 			nil, "url=tcp://broker:1883 user= name=gw prefix=blugw keys=[00:11:22:33:44:55=00000000000000000000000000000001 11:22:33:44:55:66=12345678901234567890123456789012 22:33:44:55:66:77=1e345678901234567890123456789012] allow=-a-b-c watchdog=5m0s ha=false haPrefix=homeassistant level=INFO qos=1 names=[\"11:22:33:44:55:66=0012\"] password=", ""},
 
 		{"yes is not true", base + "homeassistant: {enabled: yes}\n", nil, "", `blugw.yaml: homeassistant.enabled "yes": want true or false`},
+		{"bad time beacon", base + "time_beacon: on\n", nil, "", `blugw.yaml: time_beacon "on": want true or false`},
 		{"unknown key", "mqtt:\n  url: tcp://broker:1883\n  pasword: s3cret\n", nil, "", "line 3: field pasword not found"},
 		{"unknown top-level key", base + "loglevel: debug\n", nil, "", "line 3: field loglevel not found"},
 		{"no URL", "name: gw\n", nil, "", `blugw.yaml: mqtt.url "": want`},
@@ -300,6 +304,9 @@ func render(c config) string {
 		}
 		slices.Sort(names)
 		out += fmt.Sprintf(" names=%q", names)
+	}
+	if c.opts.TimeBeacon {
+		out += " timeBeacon=true"
 	}
 	return out
 }

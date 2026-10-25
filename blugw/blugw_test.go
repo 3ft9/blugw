@@ -1,8 +1,11 @@
 package blugw
 
 import (
+	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +49,7 @@ func TestHandle(t *testing.T) {
 		ht     = "3bd38850-bb2a-9ebe-8832-f2305871f432"
 		button = "518abb99-e63c-e043-fe03-c94f5275d5e3"
 		other  = "00000000-0000-0000-0000-000000000001"
+		beacon = "1F:00:00:00:00:01" // non-resolvable random address
 
 		htMfr     = "0101000b03000ada778c8f3938" // MAC 38:39:8F:8C:77:DA, model 3
 		buttonMfr = "0101000b01000aa43df52235b4" // MAC B4:35:22:F5:3D:A4, model 1
@@ -95,6 +99,8 @@ func TestHandle(t *testing.T) {
 		{"encrypted, MAC in payload differs from address", 1000 * ms, "C0:00:00:00:00:01", "", "43a5808fe64854f196c06ffb4900112233f08ecbde", "", `54:48:E6:8F:80:A5 model=0 name="" ctr=857870592 temperature=25.06 humidity=50.55`},
 		{"same counter from another address", 2000 * ms, "54:48:E6:8F:80:A5", "", "41a47266c95f730011223378237214", "", ""},
 		{"lower counter", 3000 * ms, "54:48:E6:8F:80:A5", "", "41e445f3c9962b332211006c7c4519", "", ""},
+
+		{"time beacon", 0, beacon, "", "", "0dd791db6a000000009079c8699054dd6a100e0000", ""},
 	}
 	for _, st := range steps {
 		r, ok := s.handle(advert{
@@ -115,6 +121,48 @@ func TestHandle(t *testing.T) {
 		if got != st.want {
 			t.Errorf("%s:\n got  %s\n want %s", st.name, got, st.want)
 		}
+	}
+	if s.devices[beacon] != nil {
+		t.Error("time beacon added a device")
+	}
+}
+
+func TestTimeBeacon(t *testing.T) {
+	plug := time.Unix(0x6adb91d7, 0) // 2026-10-23 16:56:55 UTC
+	tests := []struct {
+		zone string
+		at   time.Time
+		want string // 0D, time, standard offset, DST start, DST end, DST shift
+	}{
+		// Captured from a Shelly Plug: DST 2026-03-29 01:00 to 2026-10-25 01:00 UTC.
+		{"Europe/London", plug, "0dd791db6a000000009079c8699054dd6a100e0000"},
+		{"UTC", plug, "0dd791db6a00000000000000000000000000000000"},
+		{"Asia/Tokyo", plug, "0dd791db6a907e0000000000000000000000000000"},
+		// -5 h; DST 2026-03-08 07:00 to 2026-11-01 06:00 UTC.
+		{"America/New_York", plug, "0dd791db6ab0b9ffff701ead6960d5e66a100e0000"},
+		// DST from 2026-10-03 16:00 UTC, and until 2026-04-04 16:00 UTC.
+		{"Australia/Sydney", plug, "0dd791db6aa08c00008026c16a8035d169100e0000"},
+		// 2027-01-01 01:00 local: 2027's DST from 2027-10-02 and until 2027-04-03.
+		{"Australia/Sydney", time.Date(2026, 12, 31, 14, 0, 0, 0, time.UTC), "0de05f366ba08c00008008a16c8017b16b100e0000"},
+	}
+	for _, tc := range tests {
+		loc, err := time.LoadLocation(tc.zone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hex.EncodeToString(timeBeacon(tc.at, loc)); got != tc.want {
+			t.Errorf("%s at %v:\n got  %s\n want %s", tc.zone, tc.at, got, tc.want)
+		}
+	}
+}
+
+func TestScanTimeBeaconUnsupported(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("supported on Linux")
+	}
+	// Must fail before touching the adapter.
+	if err := Scan(context.Background(), Options{TimeBeacon: true}, nil); !errors.Is(err, errors.ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
 	}
 }
 
