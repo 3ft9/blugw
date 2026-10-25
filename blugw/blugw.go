@@ -239,6 +239,12 @@ type scanner struct {
 
 // handle processes one advert and reports whether it is a new reading.
 func (s *scanner) handle(a advert) (Reading, bool) {
+	mfrMAC, model := parseShelly(a.mfr)
+	if a.data == nil && a.name == "" && mfrMAC == (bthome.MAC{}) && model == 0 {
+		// Nothing to remember, as in a time beacon. Another blugw sends its
+		// own from a new random address every few seconds.
+		return Reading{}, false
+	}
 	d := s.devices[a.addr]
 	if d == nil {
 		d = &device{}
@@ -247,7 +253,6 @@ func (s *scanner) handle(a advert) (Reading, bool) {
 	if a.name != "" {
 		d.name = a.name
 	}
-	mfrMAC, model := parseShelly(a.mfr)
 	if mfrMAC != (bthome.MAC{}) {
 		d.mac = mfrMAC
 	}

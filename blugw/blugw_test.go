@@ -49,6 +49,7 @@ func TestHandle(t *testing.T) {
 		ht     = "3bd38850-bb2a-9ebe-8832-f2305871f432"
 		button = "518abb99-e63c-e043-fe03-c94f5275d5e3"
 		other  = "00000000-0000-0000-0000-000000000001"
+		beacon = "1F:00:00:00:00:01" // non-resolvable random address
 
 		htMfr     = "0101000b03000ada778c8f3938" // MAC 38:39:8F:8C:77:DA, model 3
 		buttonMfr = "0101000b01000aa43df52235b4" // MAC B4:35:22:F5:3D:A4, model 1
@@ -98,6 +99,8 @@ func TestHandle(t *testing.T) {
 		{"encrypted, MAC in payload differs from address", 1000 * ms, "C0:00:00:00:00:01", "", "43a5808fe64854f196c06ffb4900112233f08ecbde", "", `54:48:E6:8F:80:A5 model=0 name="" ctr=857870592 temperature=25.06 humidity=50.55`},
 		{"same counter from another address", 2000 * ms, "54:48:E6:8F:80:A5", "", "41a47266c95f730011223378237214", "", ""},
 		{"lower counter", 3000 * ms, "54:48:E6:8F:80:A5", "", "41e445f3c9962b332211006c7c4519", "", ""},
+
+		{"time beacon", 0, beacon, "", "", "0dd791db6a000000009079c8699054dd6a100e0000", ""},
 	}
 	for _, st := range steps {
 		r, ok := s.handle(advert{
@@ -118,6 +121,9 @@ func TestHandle(t *testing.T) {
 		if got != st.want {
 			t.Errorf("%s:\n got  %s\n want %s", st.name, got, st.want)
 		}
+	}
+	if s.devices[beacon] != nil {
+		t.Error("time beacon added a device")
 	}
 }
 
