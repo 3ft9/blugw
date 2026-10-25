@@ -402,18 +402,25 @@ BLU devices keep Unix-time counters without a mains-powered Shelly in range.
 To test it:
 
 1. Turn off the Bluetooth gateway on every Shelly plug in range of the test
-   device, so that blugw is its only time source.
-2. On a Raspberry Pi whose clock is synchronised, run blugw-mqtt with
-   `BLUGW_TIME_BEACON=true`, `BLUGW_LOG_LEVEL=debug` and the key of an
-   encrypted BLU H&T, and wait for `time beacon on`. A scanner app such as
-   nRF Connect should see the Pi advertising manufacturer data for `0x0BA9`
-   that starts with `0D`.
-3. Wait for an `encrypted reading` log line from the H&T, so that blugw-mqtt
-   holds its counter. Then take the battery out for a few minutes and put it
-   back. The `counter` in the H&T's next `encrypted reading` lines should match
-   Unix time (`date +%s`) to within a few seconds. A counter that restarted
-   near zero is dropped instead, with warnings about a counter lower than the
-   last one.
+   device, an encrypted BLU H&T, so that blugw is its only time source.
+2. Watch the H&T's encryption counter with a scanner app such as nRF Connect.
+   This needs no key: every encrypted advertisement carries the counter in
+   clear, as the 4 bytes (little-endian) before the 4-byte MIC that ends the
+   BTHome service data for UUID `0xFCD2`.
+3. As a control, with no beacon in range (blugw-mqtt stopped, or running
+   without `BLUGW_TIME_BEACON`), take the H&T's battery out for a few minutes
+   and put it back. Its counter should restart well below Unix time
+   (`date +%s`). If it does not, another beacon is still in range or the
+   device kept its counter, and the steps below prove nothing.
+4. On a Raspberry Pi whose clock is synchronised, run blugw-mqtt with
+   `BLUGW_TIME_BEACON=true`, `BLUGW_LOG_LEVEL=debug` and the H&T's key, and
+   wait for `time beacon on`. The scanner app should see the Pi advertising
+   manufacturer data for `0x0BA9` that starts with `0D`.
+5. Wait for an `encrypted reading` log line from the H&T, so that blugw-mqtt
+   holds its counter, then power-cycle the H&T as in step 3. Its counter, in
+   the scanner app and in its next `encrypted reading` lines, should now match
+   Unix time to within a few seconds. A counter that restarted as in step 3 is
+   dropped instead, with warnings about a counter lower than the last one.
 
 ## Deployment
 
