@@ -367,6 +367,60 @@ blugw handles encrypted packets as follows:
 
 ## Deployment
 
+blugw-mqtt needs `bluetoothd` running with a powered controller: check that
+`bluetoothctl show` lists one before starting it. On NixOS, set
+`hardware.bluetooth.enable = true`.
+
+The Nomad setup below runs in production. The systemd and Docker examples
+follow the same requirements but have not been run as written.
+
+### Nomad
+
+Use the `raw_exec` driver, which runs the task on the host where it can reach
+`bluetoothd` over the system D-Bus. Run one instance (`count = 1`): every
+receiver publishes what it hears, so a second one in range of the same devices
+would publish their events twice. If the broker is a Nomad service, render its
+address from Consul:
+
+```hcl
+task "blugw-mqtt" {
+  driver = "raw_exec"
+
+  artifact {
+    source      = "https://github.com/3ft9/blugw/releases/download/v0.1.0/blugw-mqtt_linux_amd64.tar.gz"
+    destination = "local"
+    options {
+      checksum = "sha256:4a6f4c03f7b8fbc3d1eda117f098e27e98f75c8d413b210aa94499188abccb22"
+    }
+  }
+
+  config {
+    command = "${NOMAD_TASK_DIR}/blugw-mqtt"
+    args    = ["-config", "${NOMAD_TASK_DIR}/config.yml"]
+  }
+
+  template {
+    change_mode = "restart"
+    destination = "local/config.yml"
+    data        = <<EOH
+mqtt:
+  url: {{ range service "mqtt" }}tcp://{{ .Address }}:{{ .Port }}{{ end }}
+name: home
+homeassistant:
+  enabled: true
+EOH
+  }
+
+  resources {
+    cpu    = 100
+    memory = 64
+  }
+}
+```
+
+Constrain the job to clients with a working Bluetooth adapter if not all of
+them have one.
+
 ### systemd
 
 blugw-mqtt does not need root. It talks to `bluetoothd` over D-Bus, and BlueZ's
@@ -512,8 +566,16 @@ follows:
 
 - **Windows**: blugw builds, but tinygo bluetooth v0.16.0 does not deliver
   service data on Windows, so no readings arrive.
-- **Linux**: blugw has only been tested on macOS. The Linux build is
-  cross-compiled but has not yet been run against real devices.
+- **Tested on**: macOS on Apple silicon, and Linux on amd64 (NixOS 25.11,
+  kernel 6.12, BlueZ 5.84) with Intel 7265 and Intel AX211 adapters, under
+  Nomad's `raw_exec` driver as root. Devices: Shelly BLU H&T, Motion and
+  Door/Window. Not yet run: the ARM builds on a Raspberry Pi, and
+  blugw-mqtt as a non-root user.
+- **MediaTek MT7921 adapters**: on one test machine, the MT7921's Bluetooth
+  (USB `0e8d:7961`) failed setup with `hci0: Failed to send wmt func ctrl
+  (-22)`, so BlueZ saw no controller, and reloading `btusb` did not help. This
+  is a kernel or firmware problem, not blugw's, but it is why the deployment
+  notes say to check `bluetoothctl show` first.
 - **macOS**: CoreBluetooth hides device addresses. blugw learns MACs from
   Shelly manufacturer data or from a MAC embedded in the BTHome payload, so
   other devices are not reported on macOS.
