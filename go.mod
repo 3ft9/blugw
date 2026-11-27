@@ -3,7 +3,7 @@ module github.com/3ft9/blugw
 go 1.25.0
 
 require (
-	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/eclipse/paho.mqtt.golang v1.5.2
 	go.yaml.in/yaml/v3 v3.0.5
 	tinygo.org/x/bluetooth v0.16.0
 )
@@ -20,8 +20,8 @@ require (
 	github.com/tinygo-org/cbgo v0.0.4 // indirect
 	github.com/tinygo-org/pio v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
-	golang.org/x/net v0.44.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	tinygo.org/x/espradio v0.3.0 // indirect
 )
